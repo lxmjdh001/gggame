@@ -1,0 +1,12 @@
+export interface Session { id: string; game_id: string; game_name: string; name: string; interval_minutes: number; offset_minutes: number; group: string; positions: number[]; format: 'digits' | 'triple' | 'padded' | 'marksix' | 'sum'; rule: string }
+export interface Round { session_id: string; issue: string; source_issue: string; source_group: string; positions: number[]; numbers: number[]; display_numbers: string[]; sum?: number; draw_at: string; published_at: string; origin: 'simulated_history' | 'scheduled' }
+export interface State { session: Session; latest: Round | null; server_time: string; expected_issue: string; pending: boolean; next_draw_at: string; bet_close_at: string; betting_open: boolean }
+export interface History { items: Round[]; next_before?: string; total: number }
+export async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(path, { signal, cache: 'no-store' })
+  if (!response.ok) throw new Error(`服务暂不可用（${response.status}）`)
+  const body = await response.json()
+  if (!body || !('data' in body)) throw new Error('服务响应格式错误')
+  return body.data as T
+}
+export interface PickSubmission { unitCents: number; requestKey: string; numbers: number[]; amountCents: number; sessionID: string; sessionName: string; targetIssue: string }

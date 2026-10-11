@@ -1,0 +1,5 @@
+export interface PromotionInput {title:string;tagline:string;summary:string;content:string;button:string;action:string;theme:string;icon:string;enabled:boolean;sort:number;version:number}
+export interface Promotion extends PromotionInput {id:string;updated_at:string}
+export const themes=[{id:'lavender',name:'薰衣紫',bg:'#f0e7ff',end:'#faf6ff',ink:'#8561c3',line:'#e7dbfa'},{id:'mint',name:'薄荷绿',bg:'#e0f7ed',end:'#f5fff9',ink:'#509f84',line:'#d2ede1'},{id:'peach',name:'蜜桃橙',bg:'#ffebdc',end:'#fffaf5',ink:'#bb7b51',line:'#f7ddc9'},{id:'sky',name:'晴空蓝',bg:'#e1efff',end:'#f6fbff',ink:'#588bbd',line:'#d3e5f5'},{id:'rose',name:'蔷薇粉',bg:'#fce4ee',end:'#fff7fb',ink:'#bc6d91',line:'#f5d7e4'},{id:'gold',name:'暖杏金',bg:'#fff2ce',end:'#fffdf4',ink:'#a58a40',line:'#eee3b8'}]
+export const actions=[{id:'details',name:'查看活动详情'},{id:'commissions',name:'邀请与佣金'},{id:'favorites',name:'我的收藏'},{id:'home',name:'游戏大厅'},{id:'wallet',name:'我的钱包'}]
+export const icons=[{id:'gift',name:'礼物'},{id:'heart',name:'爱心'},{id:'sparkles',name:'星光'},{id:'ticket',name:'礼券'},{id:'trophy',name:'奖杯'},{id:'party',name:'庆祝'}]
