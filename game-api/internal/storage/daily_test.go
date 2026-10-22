@@ -52,7 +52,7 @@ func TestDailyAtomicImmutableRestartAndConcurrent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.GeneratedAt.After(first.ScheduledAt) || last.SchemaVersion != 4 {
+	if first.GeneratedAt.After(first.ScheduledAt) || last.SchemaVersion != model.SchemaVersion {
 		t.Fatal("not pre-generated")
 	}
 	count := 0
@@ -110,6 +110,9 @@ func TestDailyPreservesLegacyBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.SchemaVersion = 3
+	for _, group := range []string{"g9", "g10", "g11"} {
+		delete(d.Groups, group)
+	}
 	if err = s.Save(d); err != nil {
 		t.Fatal(err)
 	}

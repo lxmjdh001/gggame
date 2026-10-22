@@ -154,7 +154,7 @@ func TestRandomPreviewRulesAndConcurrentAdoption(t *testing.T) {
 			}
 			seen[n] = true
 		}
-		if len(draft.Candidate.Round.Numbers) != len(g.Positions) {
+		if len(draft.Candidate.Round.Numbers) != g.NumberRuleAt(draft.Candidate.Round.DrawAt).Count {
 			t.Fatal("incorrect result length")
 		}
 		if g.Format == "padded" || g.Format == "marksix" {

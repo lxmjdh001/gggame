@@ -1,0 +1,26 @@
+[Unit]
+Description=Starlight private number service
+After=network.target
+
+[Service]
+Type=simple
+User=starlight
+Group=starlight
+WorkingDirectory=/opt/starlight
+Environment=TZ=Asia/Shanghai
+Environment=GAME_API_ADDR=127.0.0.1:8081
+Environment=GAME_API_DB=/var/lib/starlight/source/draws.db
+Environment=GAME_API_TOKEN_FILE=/var/lib/starlight/source/source-api.token
+ExecStart=/opt/starlight/current/bin/game-api
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/starlight/source
+
+[Install]
+WantedBy=multi-user.target

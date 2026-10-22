@@ -66,9 +66,62 @@ func synthetic(at time.Time) (model.Draw, error) {
 	model.Display(&d)
 	return d, model.Validate(d)
 }
+func (e *Engine) simulatedRound(session games.Session, at time.Time) (games.Round, error) {
+	issue := at.Format(model.IssueLayout)
+	d, err := e.Store.SeedSource(issue)
+	if errors.Is(err, store.ErrNotFound) {
+		d, err = synthetic(at)
+		if err != nil {
+			return games.Round{}, err
+		}
+		if err = e.Store.SaveSeedSource(d); err != nil {
+			return games.Round{}, err
+		}
+	} else if err != nil {
+		return games.Round{}, err
+	}
+	if _, present := d.Groups[session.Group]; !present {
+		extra, err := synthetic(at)
+		if err != nil {
+			return games.Round{}, err
+		}
+		d, err = e.Store.ExtendSeedSource(extra)
+		if err != nil {
+			return games.Round{}, err
+		}
+	}
+	return games.Project(session, d, "simulated_history")
+}
+
 func (e *Engine) Seed(now time.Time) error {
 	// Exclude this minute so a source already being generated cannot collide with seeded history.
 	cutoff := now.In(model.Beijing).Truncate(time.Minute).Add(-time.Nanosecond)
+	// Never occupy a new-cadence issue with simulated results. Existing seed
+	// markers still preserve all records; fresh sessions stop before the change.
+	markSixCutoff := cutoff
+	if !markSixCutoff.Before(games.RegionalMarkSixStart()) {
+		markSixCutoff = games.RegionalMarkSixStart().Add(-time.Nanosecond)
+	}
+	updated, err := e.Store.HongKongHistoryUpdated()
+	if err != nil {
+		return err
+	}
+	if !updated {
+		hk, _ := games.Find("lhc-hk")
+		items := make([]games.Round, 0, 100)
+		last := hk.SimulatedDue(markSixCutoff)
+		for i := 0; i < 100; i++ {
+			r, err := e.simulatedRound(hk, last.Add(-games.SourcePublishDelay))
+			if err != nil {
+				return err
+			}
+			items = append(items, r)
+			last = last.Add(-48 * time.Hour)
+		}
+		if err := e.Store.ReplaceHongKongSimulatedHistory(items, markSixCutoff); err != nil {
+			return err
+		}
+	}
 	for _, session := range games.All() {
 		done, err := e.Store.Seeded(session.ID)
 		if err != nil {
@@ -77,34 +130,23 @@ func (e *Engine) Seed(now time.Time) error {
 		if done {
 			continue
 		}
+		initialTarget, err := e.Store.QuickThreeSeedTarget(session, now)
+		if err != nil {
+			return err
+		}
 		items := make([]games.Round, 0, 100)
-		last := session.Due(cutoff)
+		seedCutoff := cutoff
+		if session.GameID == "lhc" {
+			seedCutoff = markSixCutoff
+		}
+		if !initialTarget.IsZero() && !seedCutoff.Before(initialTarget) {
+			seedCutoff = initialTarget.Add(-time.Nanosecond)
+		}
+		last := session.Due(seedCutoff)
 		for i := 0; i < 100; i++ {
-			at := last.Add(-time.Duration(i*session.IntervalMinutes)*time.Minute - games.SourcePublishDelay)
-			issue := at.Format(model.IssueLayout)
-			d, err := e.Store.SeedSource(issue)
-			if errors.Is(err, store.ErrNotFound) {
-				d, err = synthetic(at)
-				if err != nil {
-					return err
-				}
-				if err = e.Store.SaveSeedSource(d); err != nil {
-					return err
-				}
-			} else if err != nil {
-				return err
-			}
-			if _, present := d.Groups[session.Group]; !present {
-				extra, err := synthetic(at)
-				if err != nil {
-					return err
-				}
-				d, err = e.Store.ExtendSeedSource(extra)
-				if err != nil {
-					return err
-				}
-			}
-			r, err := games.Project(session, d, "simulated_history")
+			at := last.Add(-games.SourcePublishDelay)
+			last = session.Due(last.Add(-time.Nanosecond))
+			r, err := e.simulatedRound(session, at)
 			if err != nil {
 				return err
 			}
@@ -148,9 +190,37 @@ func (e *Engine) prefetch(ctx context.Context, now time.Time) error {
 			return err
 		}
 	}
+	backfillCursor, err := e.Store.RegionalBackfillCursor()
+	if err != nil {
+		return err
+	}
+	if backfillCursor != "" && (cursor == "" || backfillCursor < cursor) {
+		cursor = backfillCursor
+	}
+	quickThreeCursor, err := e.Store.QuickThreeBackfillCursor()
+	if err != nil {
+		return err
+	}
+	if quickThreeCursor != "" && (cursor == "" || quickThreeCursor < cursor) {
+		cursor = quickThreeCursor
+	}
 	latest, err := e.Source.Latest(ctx)
 	if err != nil {
 		return err
+	}
+	if err = model.Validate(latest); err != nil {
+		return err
+	}
+	upgrade, err := e.Store.SourceNeedsUpgrade(latest)
+	if err != nil {
+		return err
+	}
+	if upgrade {
+		// Re-fetch the same prepared day once to append new groups to existing slots.
+		dayStart := latest.ScheduledAt.In(model.Beijing).Format("20060102")
+		if cursor == "" || dayStart < cursor {
+			cursor = dayStart
+		}
 	}
 	if latest.Issue <= cursor {
 		return nil
@@ -174,6 +244,11 @@ func (e *Engine) prefetch(ctx context.Context, now time.Time) error {
 			if d.GeneratedAt.After(now) {
 				return fmt.Errorf("source generation timestamp is in future")
 			}
+			for _, generatedAt := range d.GroupGeneratedAt {
+				if generatedAt.After(now) {
+					return fmt.Errorf("source group generation timestamp is in future")
+				}
+			}
 			if d.SchemaVersion < 4 && d.ScheduledAt.After(now) {
 				return fmt.Errorf("future legacy source rejected")
 			}
@@ -191,6 +266,12 @@ func (e *Engine) prefetch(ctx context.Context, now time.Time) error {
 	return e.Store.CacheSources(pending)
 }
 func (e *Engine) publishDue(now time.Time) error {
+	if err := e.Store.BackfillRegionalMarkSix(now); err != nil {
+		return err
+	}
+	if err := e.Store.BackfillQuickThree(now); err != nil {
+		return err
+	}
 	cursor, err := e.Store.LiveCursor()
 	if err != nil {
 		return err

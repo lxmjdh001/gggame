@@ -45,7 +45,7 @@ func TestSeed100PerSessionSharedSourcesAndRestart(t *testing.T) {
 			if r.Origin != "simulated_history" || !r.DrawAt.Before(at) || !session.Matches(r.DrawAt) {
 				t.Fatal("bad seed metadata")
 			}
-			if i > 0 && h.Items[i-1].DrawAt.Sub(r.DrawAt) != time.Duration(session.IntervalMinutes)*time.Minute {
+			if i > 0 && !session.SimulatedDue(h.Items[i-1].DrawAt.Add(-time.Nanosecond)).Equal(r.DrawAt) {
 				t.Fatal("seed cadence wrong")
 			}
 			d, err := db.SeedSource(r.SourceIssue)
@@ -142,6 +142,9 @@ func TestHoldSourceUntilSecond05(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, s := range games.All() {
+		if !s.MatchesSource(at) {
+			continue
+		}
 		r, err := db.Get(s.ID, d.Issue)
 		if err != nil || !r.DrawAt.Equal(at.Add(4*time.Second)) {
 			t.Fatalf("%s not published at05: %v", s.ID, err)
@@ -152,7 +155,11 @@ func TestHoldSourceUntilSecond05(t *testing.T) {
 	}
 	for _, s := range games.All() {
 		h, _ := db.History(s.ID, 100, "")
-		if h.Total != 1 {
+		want := 0
+		if s.MatchesSource(at) {
+			want = 1
+		}
+		if h.Total != want {
 			t.Fatal("duplicate publication")
 		}
 	}
@@ -277,4 +284,62 @@ func TestPublicationWorkerDoesNotWaitForNetwork(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("network timeout blocked publication")
+}
+
+func TestRefreshSchemaFourCacheForNewRegions(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "upgrade.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	at := time.Date(2026, 10, 13, 21, 30, 1, 0, model.Beijing)
+	now := at.Add(-time.Hour)
+	upgraded, err := synthetic(at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upgraded.GeneratedAt = now.Add(-time.Hour)
+	upgraded.GroupGeneratedAt = map[string]time.Time{}
+	old := upgraded
+	old.SchemaVersion = 4
+	old.Groups = map[string][]int{}
+	for group, numbers := range upgraded.Groups {
+		if group == "g9" || group == "g10" || group == "g11" {
+			upgraded.GroupGeneratedAt[group] = now.Add(-time.Minute)
+		} else {
+			old.Groups[group] = numbers
+		}
+	}
+	old.GroupGeneratedAt = nil
+	if err = db.CacheSources([]model.Draw{old}); err != nil {
+		t.Fatal(err)
+	}
+	e := Engine{Store: db, Source: sourceStub{draw: upgraded}}
+	if err = e.prefetch(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range games.All() {
+		if g.GameID != "lhc" || !g.MatchesSource(at) {
+			continue
+		}
+		r, err := db.PreviewRound(g, at.Add(games.SourcePublishDelay))
+		if err != nil || r == nil || len(r.Numbers) != g.NumberRuleAt(at.Add(games.SourcePublishDelay)).Count {
+			t.Fatal(g.ID, "not upgraded", err)
+		}
+	}
+	if err = e.prefetch(context.Background(), now); err != nil {
+		t.Fatal("repeat refresh", err)
+	}
+	if err = e.publishDue(at.Add(games.SourcePublishDelay)); err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range games.All() {
+		if g.GameID != "lhc" || !g.MatchesSource(at) {
+			continue
+		}
+		r, err := db.Get(g.ID, upgraded.Issue)
+		if err != nil || r.Origin != "scheduled" {
+			t.Fatal(g.ID, "not published", err)
+		}
+	}
 }

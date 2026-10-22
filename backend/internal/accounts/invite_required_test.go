@@ -23,7 +23,7 @@ func TestInviteRequiredRegistration(t *testing.T) {
 	}
 	must(t, s.SaveSettings(admin.ID, cfg))
 	for _, code := range []string{"", " \t\n", "NONEXISTENT"} {
-		if _, token, e := s.Register("invite_new", testPassword, code); e == nil || token != "" {
+		if _, token, e := s.Register("invite_new", testPassword, code, "13800138000", ""); e == nil || token != "" {
 			t.Fatal("invalid registration accepted", code)
 		}
 	}
@@ -32,12 +32,12 @@ func TestInviteRequiredRegistration(t *testing.T) {
 		t.Fatal("inviter not bound")
 	}
 	must(t, s.SetStatus(admin.ID, parent.ID, "disabled"))
-	if _, _, e = s.Register("inactive_invite", testPassword, parent.InviteCode); e == nil {
+	if _, _, e = s.Register("inactive_invite", testPassword, parent.InviteCode, "13800138000", ""); e == nil {
 		t.Fatal("disabled inviter accepted")
 	}
 	cfg.Registration = false
 	must(t, s.SaveSettings(admin.ID, cfg))
-	if _, _, e = s.Register("closed_user", testPassword, admin.InviteCode); e == nil {
+	if _, _, e = s.Register("closed_user", testPassword, admin.InviteCode, "13800138000", ""); e == nil {
 		t.Fatal("closed registration accepted")
 	}
 	_, _, e = s.Login(child.Username, testPassword)
@@ -49,7 +49,7 @@ func TestInviteRequiredRegistration(t *testing.T) {
 	if independent.InviterID != "" {
 		t.Fatal("unexpected inviter")
 	}
-	if _, _, e = s.Register("bad_optional", testPassword, "NONEXISTENT"); e == nil {
+	if _, _, e = s.Register("bad_optional", testPassword, "NONEXISTENT", "13800138000", ""); e == nil {
 		t.Fatal("invalid optional code accepted")
 	}
 }
@@ -94,14 +94,15 @@ func TestInviteRequiredPersistenceAndHTTP(t *testing.T) {
 		t.Fatal("requirement not persisted/published")
 	}
 	for _, code := range []string{"", "  ", admin.InviteCode} {
-		body, e = json.Marshal(map[string]string{"username": "http_invite_new", "password": testPassword, "invite_code": code})
+		body, e = json.Marshal(secureRegistrationFields(t, s, map[string]string{"username": "httpinvitenew", "password": testPassword, "phone": "13800138000", "invite_code": code}))
 		must(t, e)
 		req = httptest.NewRequest("POST", "http://localhost/api/v1/auth/register", strings.NewReader(string(body)))
 		req.Header.Set("Content-Type", "application/json")
 		w = httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
 		if code == admin.InviteCode {
-			if w.Code != 200 || len(w.Result().Cookies()) != 1 {
+			session := loginSecurityCookie(w.Result().Cookies(), "starlight_session")
+			if w.Code != 200 || session == nil || session.Value == "" || session.MaxAge <= 0 {
 				t.Fatal("valid invite rejected", w.Body.String())
 			}
 		} else if w.Code != 400 || len(w.Result().Cookies()) != 0 || !strings.Contains(w.Body.String(), "注册需要邀请码") {

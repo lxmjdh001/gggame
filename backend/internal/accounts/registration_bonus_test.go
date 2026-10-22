@@ -22,7 +22,7 @@ func TestRegistrationBonusAtomicAndOnce(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			u, token, e := s.Register("bonus_member", testPassword, existing.InviteCode)
+			u, token, e := s.Register("bonus_member", testPassword, existing.InviteCode, "13800138000", "")
 			if e == nil {
 				successes.Add(1)
 				if u.Balance != 1000000 || token == "" {
@@ -55,7 +55,7 @@ func TestRegistrationBonusAtomicAndOnce(t *testing.T) {
 	}
 	cfg.InviteRequired = true
 	must(t, s.SaveSettings(admin.ID, cfg))
-	if _, _, e = s.Register("failed_bonus", testPassword, ""); e == nil {
+	if _, _, e = s.Register("failed_bonus", testPassword, "", "13800138000", ""); e == nil {
 		t.Fatal("missing invitation accepted")
 	}
 	must(t, s.db.View(func(tx *bolt.Tx) error {

@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -103,37 +102,77 @@ func (h *HTTP) limited(r *http.Request) bool {
 }
 func (h *HTTP) Bind(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/site", func(w http.ResponseWriter, r *http.Request) { cfg, e := h.Store.Settings(); result(w, cfg, e) })
+	mux.HandleFunc("GET /api/v1/auth/captcha", func(w http.ResponseWriter, r *http.Request) {
+		if h.limited(r) {
+			response(w, 429, map[string]any{"error": map[string]string{"message": "操作过于频繁，请一分钟后再试"}})
+			return
+		}
+		challenge, err := h.Store.NewCaptcha()
+		result(w, challenge, err)
+	})
+	mux.HandleFunc("GET /api/v1/auth/security-questions", func(w http.ResponseWriter, r *http.Request) {
+		result(w, SecurityQuestions(), nil)
+	})
 	for _, path := range []string{"login", "register"} {
 		mux.HandleFunc("POST /api/v1/auth/"+path, func(w http.ResponseWriter, r *http.Request) {
 			if h.limited(r) {
 				response(w, 429, map[string]any{"error": map[string]string{"message": "操作过于频繁，请一分钟后再试"}})
 				return
 			}
-			var in struct {
-				Username string `json:"username"`
-				Password string `json:"password"`
-				Invite   string `json:"invite_code"`
-			}
+			var in SecureRegistrationInput
 			if e := decode(w, r, &in); e != nil {
 				result(w, nil, e)
 				return
 			}
-			var u User
-			var token string
-			var e error
-			if path == "register" {
-				u, token, e = h.Store.Register(strings.TrimSpace(in.Username), in.Password, strings.TrimSpace(in.Invite))
-			} else {
-				u, token, e = h.Store.Login(strings.TrimSpace(in.Username), in.Password)
+			if path == "login" {
+				u, token, err := h.Store.Login(strings.TrimSpace(in.Username), in.Password)
+				if err == nil {
+					_ = h.Store.CancelLoginSecurity(pendingLoginToken(r))
+					h.setLoginChallengeCookie(w, "")
+					h.setCookie(w, token)
+				}
+				result(w, u, err)
+				return
 			}
+			u, token, e := h.Store.RegisterSecure(in)
 			if e == nil {
+				_ = h.Store.CancelLoginSecurity(pendingLoginToken(r))
+				h.setLoginChallengeCookie(w, "")
 				h.setCookie(w, token)
 			}
 			result(w, u, e)
 		})
 	}
+	mux.HandleFunc("POST /api/v1/auth/login/verify", func(w http.ResponseWriter, r *http.Request) {
+		if h.limited(r) {
+			response(w, 429, map[string]any{"error": map[string]string{"message": "操作过于频繁，请一分钟后再试"}})
+			return
+		}
+		var in LoginSecurityInput
+		if err := decode(w, r, &in); err != nil {
+			result(w, nil, err)
+			return
+		}
+		u, token, err := h.Store.CompleteLoginSecurity(pendingLoginToken(r), in)
+		if err == nil {
+			h.setLoginChallengeCookie(w, "")
+			h.setCookie(w, token)
+		} else if errors.Is(err, errLoginChallengeInvalid) || errors.Is(err, ErrForbidden) {
+			h.setLoginChallengeCookie(w, "")
+		}
+		loginSecurityResult(w, u, err)
+	})
+	mux.HandleFunc("POST /api/v1/auth/login/cancel", func(w http.ResponseWriter, r *http.Request) {
+		err := h.Store.CancelLoginSecurity(pendingLoginToken(r))
+		h.setLoginChallengeCookie(w, "")
+		result(w, true, err)
+	})
 	mux.HandleFunc("POST /api/v1/auth/logout", func(w http.ResponseWriter, r *http.Request) {
 		e := h.Store.Logout(cookieToken(r))
+		if err := h.Store.CancelLoginSecurity(pendingLoginToken(r)); e == nil {
+			e = err
+		}
+		h.setLoginChallengeCookie(w, "")
 		h.setCookie(w, "")
 		result(w, true, e)
 	})
@@ -152,11 +191,51 @@ func (h *HTTP) Bind(mux *http.ServeMux) {
 		}
 	}
 	mux.HandleFunc("GET /api/v1/promotions", func(w http.ResponseWriter, r *http.Request) { v, e := h.Store.Promotions(true); result(w, v, e) })
+	mux.HandleFunc("GET /api/v1/help-articles", func(w http.ResponseWriter, r *http.Request) { v, e := h.Store.HelpArticles(true); result(w, v, e) })
+	mux.HandleFunc("GET /api/v1/admin/help-articles", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		v, e := h.Store.HelpArticles(false)
+		result(w, v, e)
+	}))
+	mux.HandleFunc("PUT /api/v1/admin/help-articles/{id}", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		var in HelpArticleInput
+		if e := decode(w, r, &in); e != nil {
+			result(w, nil, e)
+			return
+		}
+		v, e := h.Store.SaveHelpArticle(u.ID, r.PathValue("id"), in)
+		result(w, v, e)
+	}))
+	mux.HandleFunc("DELETE /api/v1/admin/help-articles/{id}", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		var in struct {
+			Version int `json:"version"`
+		}
+		e := decode(w, r, &in)
+		if e == nil {
+			e = h.Store.DeleteHelpArticle(u.ID, r.PathValue("id"), in.Version)
+		}
+		result(w, true, e)
+	}))
 	mux.HandleFunc("POST /api/v1/admin/game-control/{session}/preview", auth(true, h.previewDraw))
+	mux.HandleFunc("POST /api/v1/admin/game-control/{session}/preview-batch", auth(true, h.previewDrawBatch))
 	mux.HandleFunc("POST /api/v1/admin/game-control/{session}/apply", auth(true, h.applyDraw))
+	mux.HandleFunc("GET /api/v1/admin/user-status", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		v, e := h.Store.UserStatus(r.URL.Query().Get("username"), time.Time{}, h.Draws)
+		result(w, v, e)
+	}))
 	mux.HandleFunc("GET /api/v1/admin/game-control", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
 		v, e := h.Store.GameControlWithDraws(time.Time{}, h.Draws)
 		result(w, v, e)
+	}))
+	mux.HandleFunc("POST /api/v1/admin/game-control/reset", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		var in struct {
+			Key string `json:"key"`
+		}
+		if err := decode(w, r, &in); err != nil {
+			result(w, nil, err)
+			return
+		}
+		v, err := h.Store.ResetGameControl(u.ID, in.Key, time.Time{})
+		result(w, v, err)
 	}))
 	mux.HandleFunc("GET /api/v1/admin/promotions", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
 		v, e := h.Store.Promotions(false)
@@ -204,6 +283,15 @@ func (h *HTTP) Bind(mux *http.ServeMux) {
 		v, e := h.Store.PlaceMarketOrder(u.ID, in, time.Time{})
 		result(w, v, e)
 	}))
+	mux.HandleFunc("POST /api/v1/market-orders/batch", auth(false, func(w http.ResponseWriter, r *http.Request, u User) {
+		var in MarketBatchInput
+		if err := decode(w, r, &in); err != nil {
+			result(w, nil, err)
+			return
+		}
+		v, err := h.Store.PlaceMarketBatch(u.ID, in, time.Time{})
+		result(w, v, err)
+	}))
 
 	mux.HandleFunc("GET /api/v1/auth/me", auth(false, func(w http.ResponseWriter, r *http.Request, u User) { result(w, u, nil) }))
 	mux.HandleFunc("POST /api/v1/auth/password", auth(false, func(w http.ResponseWriter, r *http.Request, u User) {
@@ -228,14 +316,111 @@ func (h *HTTP) Bind(mux *http.ServeMux) {
 		}
 		result(w, true, e)
 	}))
+	mux.HandleFunc("POST /api/v1/auth/withdrawal-password", auth(false, func(w http.ResponseWriter, r *http.Request, u User) {
+		if h.limited(r) {
+			response(w, 429, map[string]any{"error": map[string]string{"message": "操作过于频繁，请一分钟后再试"}})
+			return
+		}
+		var in struct {
+			CurrentWithdrawalPassword string `json:"current_withdrawal_password"`
+			WithdrawalPassword        string `json:"withdrawal_password"`
+			Confirmation              string `json:"withdrawal_password_confirmation"`
+		}
+		if err := decode(w, r, &in); err != nil {
+			result(w, nil, err)
+			return
+		}
+		if in.WithdrawalPassword != in.Confirmation {
+			result(w, nil, errors.New("两次提现密码不一致"))
+			return
+		}
+		updated, err := h.Store.SetWithdrawalPassword(u.ID, in.CurrentWithdrawalPassword, in.WithdrawalPassword)
+		result(w, updated, err)
+	}))
 	mux.HandleFunc("GET /api/v1/account", auth(false, func(w http.ResponseWriter, r *http.Request, u User) { v, e := h.Store.Account(u.ID); result(w, v, e) }))
+	for _, kind := range []string{"ledger", "transactions", "daily-results"} {
+		mux.HandleFunc("GET /api/v1/account/"+kind, auth(false, func(w http.ResponseWriter, r *http.Request, u User) {
+			page, err := requestPage(r)
+			if err != nil {
+				result(w, nil, err)
+				return
+			}
+			switch kind {
+			case "ledger":
+				v, err := h.Store.LedgerPage(u.ID, page)
+				result(w, v, err)
+			case "transactions":
+				v, err := h.Store.TransactionsPage(u.ID, page)
+				result(w, v, err)
+			case "daily-results":
+				v, err := h.Store.DailyResultsPage(u.ID, page)
+				result(w, v, err)
+			}
+		}))
+	}
+	mux.HandleFunc("GET /api/v1/orders", auth(false, func(w http.ResponseWriter, r *http.Request, u User) {
+		page, err := requestPage(r)
+		if err != nil {
+			result(w, nil, err)
+			return
+		}
+		v, err := h.Store.OrdersPageFiltered(u.ID, page, r.URL.Query().Get("status"))
+		result(w, v, err)
+	}))
+	mux.HandleFunc("GET /api/v1/wallet/withdrawal-settings", auth(false, func(w http.ResponseWriter, r *http.Request, u User) {
+		v, e := h.Store.WithdrawalSettings(u.ID, false)
+		result(w, v, e)
+	}))
+	mux.HandleFunc("GET /api/v1/admin/withdrawal-settings", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		v, e := h.Store.WithdrawalSettings(u.ID, true)
+		result(w, v, e)
+	}))
+	mux.HandleFunc("PUT /api/v1/admin/withdrawal-settings", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		var in WithdrawalSettings
+		e := decode(w, r, &in)
+		var v WithdrawalSettings
+		if e == nil {
+			v, e = h.Store.SaveWithdrawalSettings(u.ID, in)
+		}
+		result(w, v, e)
+	}))
+	mux.HandleFunc("GET /api/v1/admin/users/{id}/wagering", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		v, e := h.Store.Wagering(u.ID, r.PathValue("id"))
+		result(w, v, e)
+	}))
+	mux.HandleFunc("POST /api/v1/admin/users/{id}/wagering", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		var in WagerEdit
+		e := decode(w, r, &in)
+		var v Wagering
+		if e == nil {
+			v, e = h.Store.EditWagering(u.ID, r.PathValue("id"), in)
+		}
+		result(w, v, e)
+	}))
 	mux.HandleFunc("POST /api/v1/wallet/requests", auth(false, func(w http.ResponseWriter, r *http.Request, u User) {
-		var in RequestInput
+		var in WalletSubmission
 		if e := decode(w, r, &in); e != nil {
 			result(w, nil, e)
 			return
 		}
-		v, e := h.Store.CreateRequest(u.ID, in)
+		v, e := h.Store.SubmitWalletRequest(u.ID, in)
+		result(w, v, e)
+	}))
+	mux.HandleFunc("GET /api/v1/wallet/payment-settings", auth(false, func(w http.ResponseWriter, r *http.Request, u User) {
+		v, e := h.Store.DepositPaymentSettings(u.ID)
+		result(w, v, e)
+	}))
+	mux.HandleFunc("GET /api/v1/admin/payment-settings", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		v, e := h.Store.PaymentSettings(u.ID)
+		result(w, v, e)
+	}))
+	mux.HandleFunc("PUT /api/v1/admin/payment-settings", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		var in PaymentSettings
+		if e := decode(w, r, &in); e != nil {
+			result(w, nil, e)
+			return
+		}
+		v, e := h.Store.SavePaymentSettings(u.ID, in)
 		result(w, v, e)
 	}))
 	mux.HandleFunc("POST /api/v1/orders", auth(false, func(w http.ResponseWriter, r *http.Request, u User) {
@@ -260,17 +445,42 @@ func (h *HTTP) Bind(mux *http.ServeMux) {
 		}
 		result(w, true, e)
 	}))
+	mux.HandleFunc("GET /api/v1/admin/requests/pending", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		v, e := h.Store.PendingRequests(u.ID)
+		result(w, v, e)
+	}))
 	mux.HandleFunc("GET /api/v1/admin/{resource}", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
-		page := 1
-		if v := r.URL.Query().Get("page"); v != "" {
-			n, e := strconv.Atoi(v)
-			if e != nil || n < 1 || n > 1000000 {
-				result(w, nil, errors.New("页码不正确"))
-				return
-			}
-			page = n
+		page, err := requestPage(r)
+		if err != nil {
+			result(w, nil, err)
+			return
 		}
 		v, e := h.Store.AdminData(u.ID, r.PathValue("resource"), r.URL.Query().Get("q"), page)
+		result(w, v, e)
+	}))
+	mux.HandleFunc("GET /api/v1/admin/users/{id}/password", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		v, e := h.Store.MemberPasswordState(u.ID, r.PathValue("id"))
+		result(w, v, e)
+	}))
+	mux.HandleFunc("POST /api/v1/admin/users/{id}/password", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		var in MemberPasswordInput
+		e := decode(w, r, &in)
+		if e == nil {
+			e = h.Store.ResetMemberPassword(u.ID, r.PathValue("id"), in)
+		}
+		result(w, true, e)
+	}))
+	mux.HandleFunc("GET /api/v1/admin/users/{id}/descendants", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		v, e := h.Store.Descendants(u.ID, r.PathValue("id"))
+		result(w, v, e)
+	}))
+	mux.HandleFunc("POST /api/v1/admin/users/{id}/disable-descendants", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		var in DisableDescendantsInput
+		if e := decode(w, r, &in); e != nil {
+			result(w, nil, e)
+			return
+		}
+		v, e := h.Store.DisableDescendants(u.ID, r.PathValue("id"), in)
 		result(w, v, e)
 	}))
 	mux.HandleFunc("PATCH /api/v1/admin/users/{id}", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {

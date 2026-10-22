@@ -3,6 +3,7 @@ module starlight/backend
 go 1.25.0
 
 require (
+	github.com/6tail/lunar-go v1.4.6
 	go.etcd.io/bbolt v1.4.3
 	starlight/gameapi v0.0.0
 )

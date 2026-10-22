@@ -29,8 +29,40 @@ func (s *Store) PrepareDay(start time.Time, generate func(time.Time) (model.Draw
 			at := start.Add(time.Duration(i)*time.Minute + time.Second)
 			issue := at.Format(model.IssueLayout)
 			if raw := b.Get([]byte(issue)); raw != nil {
-				if _, err := decode(raw); err != nil {
+				existing, err := decode(raw)
+				if err != nil {
 					return err
+				}
+				// Add only the three new groups to today's schema-4 batches. The
+				// original eight groups and their timestamps remain unchanged.
+				if existing.SchemaVersion == 4 {
+					extra, err := generate(at)
+					if err != nil {
+						return err
+					}
+					if err = model.Validate(extra); err != nil {
+						return err
+					}
+					if extra.Issue != issue || extra.SchemaVersion != model.SchemaVersion {
+						return fmt.Errorf("generator returned incompatible supplemental batch")
+					}
+					existing.GroupGeneratedAt = make(map[string]time.Time)
+					for _, group := range []string{"g9", "g10", "g11"} {
+						existing.Groups[group] = extra.Groups[group]
+						existing.GroupGeneratedAt[group] = extra.GeneratedAt
+					}
+					existing.SchemaVersion = model.SchemaVersion
+					if err = model.Validate(existing); err != nil {
+						return err
+					}
+					model.Display(&existing)
+					updated, err := json.Marshal(existing)
+					if err != nil {
+						return err
+					}
+					if err = b.Put([]byte(issue), updated); err != nil {
+						return err
+					}
 				}
 				continue
 			}

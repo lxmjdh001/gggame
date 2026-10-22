@@ -21,14 +21,18 @@ func TestRulesAndBoundaries(t *testing.T) {
 		{"ffc-1", "p1.small", []int{4, 1, 2, 3, 5}, "win"}, {"ffc-1", "p1.big", []int{5, 1, 2, 3, 4}, "win"}, {"ffc-1", "p1.even", []int{0, 1, 2, 3, 4}, "win"},
 		{"ffc-1", "sum.small", []int{9, 9, 4, 0, 0}, "win"}, {"ffc-1", "sum.big", []int{9, 9, 5, 0, 0}, "win"},
 		{"ffc-1", "dt.dragon", []int{4, 1, 2, 3, 4}, "push"}, {"ffc-1", "dt.tiger", []int{4, 1, 2, 3, 5}, "win"},
-		{"pk10-10", "p1.big", []int{6, 1, 2, 3, 4, 5, 7, 8, 9, 10}, "win"}, {"pk10-10", "sum.small", []int{6, 5, 2, 3, 4, 1, 7, 8, 9, 10}, "win"},
+		{"pk10-10", "p1.big", []int{6, 1, 2, 3, 4, 5, 7, 8, 9, 10}, "win"}, {"pk10-10", "size3.sum.small", []int{6, 5, 2, 3, 4, 1, 7, 8, 9, 10}, "win"},
+		{"pk10-10", "size3.sum.big", []int{6, 5, 2, 3, 4, 1, 7, 8, 9, 10}, "lose"},
 		{"pc28-5", "sum.small", []int{4, 4, 5}, "win"}, {"pc28-5", "sum.big", []int{4, 4, 6}, "win"}, {"pc28-5", "sum.n13", []int{4, 4, 5}, "win"},
-		{"k3-1", "sum.small", []int{1, 1, 1}, "win"}, {"k3-1", "sum.big", []int{6, 6, 6}, "win"}, {"k3-1", "p1.small", []int{3, 6, 6}, "win"}, {"k3-1", "p1.big", []int{4, 1, 1}, "win"},
-		{"k3-1", "sum.n10", []int{2, 3, 5}, "win"}, {"k3-1", "p2.n2", []int{2, 3, 5}, "lose"},
-		{"lhc-daily", "p7.big", []int{1, 2, 3, 4, 5, 6, 49}, "push"}, {"lhc-daily", "p7.odd", []int{1, 2, 3, 4, 5, 6, 49}, "push"}, {"lhc-daily", "p7.n49", []int{1, 2, 3, 4, 5, 6, 49}, "win"},
+		{"k3-1", "k3v2.sum.small", []int{1, 1, 1}, "lose"}, {"k3-1", "k3v2.sum.big", []int{6, 6, 6}, "lose"},
+		{"k3-1", "k3v2.sum.n10", []int{2, 3, 5}, "win"}, {"k3-1", "k3v3.single.n2", []int{2, 3, 5}, "win"},
+		{"lhc-daily", "size2.p7.big", []int{1, 2, 3, 4, 5, 6, 25}, "push"}, {"lhc-daily", "parity2.p7.odd", []int{1, 2, 3, 4, 5, 6, 49}, "win"}, {"lhc-daily", "p7.n49", []int{1, 2, 3, 4, 5, 6, 49}, "win"},
 	} {
 		g, _ := games.Find(tc.id)
 		m, ok := Find(g.GameID, tc.market)
+		if !ok && g.GameID == "lhc" {
+			m, ok = findLegacyMarkSix(tc.market)
+		}
 		if !ok {
 			t.Fatal("missing market", tc.market)
 		}
@@ -40,7 +44,7 @@ func TestRulesAndBoundaries(t *testing.T) {
 }
 func TestEveryDiceOutcomeAndInvalidResults(t *testing.T) {
 	g, _ := games.Find("k3-1")
-	for _, id := range []string{"sum.big", "sum.small", "sum.odd", "sum.even"} {
+	for _, id := range []string{"k3v2.sum.big", "k3v2.sum.small", "k3v2.sum.odd", "k3v2.sum.even"} {
 		m, _ := Find("k3", id)
 		wins := 0
 		for a := 1; a <= 6; a++ {
@@ -56,11 +60,11 @@ func TestEveryDiceOutcomeAndInvalidResults(t *testing.T) {
 				}
 			}
 		}
-		if wins != 108 {
+		if wins != 105 {
 			t.Fatalf("%s winning outcomes %d/216", id, wins)
 		}
 	}
-	m, _ := Find("k3", "p1.n1")
+	m, _ := Find("k3", "k3v3.single.n1")
 	for _, n := range [][]int{{1, 2, 7}, {0, 2, 3}, {1, 2}} {
 		if _, e := Evaluate(m, g, result(g.ID, n)); e == nil {
 			t.Fatal("invalid dice accepted", n)
@@ -80,7 +84,7 @@ func TestEveryDiceOutcomeAndInvalidResults(t *testing.T) {
 func TestDragonTigerTie(t *testing.T) {
 	for _, id := range []string{"ssc", "pk10", "k3", "pc28", "lhc"} {
 		for _, m := range Catalog(id) {
-			if m.Pick == "tie" {
+			if m.Pick == "tie" && m.Kind != "lhc_seven_wave" {
 				t.Fatalf("unexpected tie in %s", id)
 			}
 		}

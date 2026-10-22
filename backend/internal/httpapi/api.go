@@ -61,6 +61,9 @@ func (a *API) Handler() http.Handler {
 		state.BettingOpen = s.BettingOpen(now)
 		if len(history.Items) > 0 {
 			state.Latest = &history.Items[0]
+			if s.ID == "lhc-hk" && state.Latest.Origin == "simulated_history" && now.Before(games.HongKongScheduleStart()) {
+				state.ExpectedIssue = s.SimulatedDue(now).Format(model.IssueLayout)
+			}
 			state.Pending = state.Latest.Issue != state.ExpectedIssue
 		}
 		ok(w, state)

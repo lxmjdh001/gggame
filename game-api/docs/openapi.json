@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Starlight Number API",
-    "version": "4.0.0",
-    "description": "北京时间每天00:00预生成当天1440批g1–g8，后端按开奖期号提取。所有号码API要求Bearer密钥；latest为最后已保存批次，可能未开奖。schema_version=4支持提前生成，兼容旧版1/2/3。"
+    "version": "5.0.0",
+    "description": "北京时间每天00:00预生成当天1440批g1–g11。g7/g9/g10/g11为各自独立的1–49不重复排列，可按位置选取7个号码（6正码+1特别号）。所有号码API要求Bearer密钥；latest为最后已保存批次，可能未开奖。schema_version=5，兼容旧版1/2/3/4。"
   },
   "servers": [
     {
@@ -18,7 +18,7 @@
   "paths": {
     "/api/v1/groups": {
       "get": {
-        "summary": "读取七组规则",
+        "summary": "读取十一组规则",
         "parameters": [],
         "responses": {
           "200": {
@@ -368,7 +368,10 @@
                 "g5",
                 "g6",
                 "g7",
-                "g8"
+                "g8",
+                "g9",
+                "g10",
+                "g11"
               ]
             },
             "description": ""
@@ -381,7 +384,7 @@
               "type": "string",
               "example": "1,3,5"
             },
-            "description": "从1开始，不可重复。g4最大9、g7最大49，其他最大10。"
+            "description": "从1开始，不可重复。g4最大9，g7/g9/g10/g11最大49，其他最大10。"
           }
         ],
         "responses": {
@@ -507,7 +510,8 @@
               1,
               2,
               3,
-              4
+              4,
+              5
             ]
           },
           "issue": {
@@ -628,6 +632,39 @@
                   "minimum": 1,
                   "maximum": 6
                 }
+              },
+              "g9": {
+                "type": "array",
+                "minItems": 49,
+                "maxItems": 49,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 49
+                }
+              },
+              "g10": {
+                "type": "array",
+                "minItems": 49,
+                "maxItems": 49,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 49
+                }
+              },
+              "g11": {
+                "type": "array",
+                "minItems": 49,
+                "maxItems": 49,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 49
+                }
               }
             }
           },
@@ -639,7 +676,15 @@
                 "type": "string"
               }
             },
-            "description": "展示字符串：g6为01–10；g7为01–49"
+            "description": "展示字符串：g6为01–10；g7/g9/g10/g11为01–49"
+          },
+          "group_generated_at": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "升级当天已有schema4批次时，仅补齐g9/g10/g11并记录实际生成时间；原g1–g8及generated_at不变。按组查询时generated_at返回对应组时间。历史日期不补造，重启不重新生成。"
           }
         }
       },
@@ -659,7 +704,10 @@
               "g5",
               "g6",
               "g7",
-              "g8"
+              "g8",
+              "g9",
+              "g10",
+              "g11"
             ]
           },
           "positions": {

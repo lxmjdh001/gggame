@@ -37,7 +37,9 @@ func Open(path string) (*Store, error) {
 				return err
 			}
 		}
-		return nil
+		// The old 45-number simulated-history rewrite is retired. Existing
+		// published and simulated rounds are immutable across this upgrade.
+		return migrateSydney49(tx)
 	})
 	if err != nil {
 		db.Close()
@@ -179,22 +181,32 @@ func (s *Store) LiveCursor() (string, error) {
 func (s *Store) CommitLive(items []games.Round, issue string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		for _, r := range items {
-			// Use the same accepted result that :00 payout preparation read.
-			replacement, err := override(tx, r.SessionID, r.Issue)
-			if err != nil {
-				return err
-			}
-			if replacement != nil {
-				publishedAt := r.PublishedAt
-				r = replacement.Round
-				r.PublishedAt = publishedAt
-			}
-			if err := put(tx, r); err != nil {
+			if err := putPublished(tx, r); err != nil {
 				return err
 			}
 		}
 		return tx.Bucket(metadata).Put([]byte("live_cursor"), []byte(issue))
 	})
+}
+
+// Live publication and historical recovery must honor the same accepted result.
+func putPublished(tx *bolt.Tx, r games.Round) error {
+	replacement, err := override(tx, r.SessionID, r.Issue)
+	if err != nil {
+		return err
+	}
+	if replacement != nil {
+		if r.SessionID == "lhc-au" {
+			g, _ := games.Find(r.SessionID)
+			if _, err := setNumbers(g, replacement.Round, replacement.Round.Numbers); err != nil {
+				return errors.New("悉尼号码格式与该期开奖规则不符")
+			}
+		}
+		publishedAt := r.PublishedAt
+		r = replacement.Round
+		r.PublishedAt = publishedAt
+	}
+	return put(tx, r)
 }
 
 // Extend simulated source records with new groups while preserving every existing group.
@@ -214,7 +226,9 @@ func (s *Store) ExtendSeedSource(d model.Draw) (model.Draw, error) {
 					out.Groups[id] = n
 				}
 			}
-			out.SchemaVersion = model.SchemaVersion
+			if d.SchemaVersion > out.SchemaVersion {
+				out.SchemaVersion = d.SchemaVersion
+			}
 			model.Display(&out)
 		}
 		if e := model.Validate(out); e != nil {

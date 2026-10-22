@@ -48,6 +48,7 @@ type SessionExposure struct {
 	Today          ProfitPeriod `json:"today"`
 }
 type GameControl struct {
+	ResetAt       *time.Time        `json:"reset_at,omitempty"`
 	AsOf          time.Time         `json:"as_of"`
 	Today         ProfitPeriod      `json:"today"`
 	Yesterday     ProfitPeriod      `json:"yesterday"`
@@ -71,6 +72,13 @@ func (s *Store) GameControlWithDraws(now time.Time, draws GameControlDrawReader)
 		}
 		now = now.In(model.Beijing)
 		out.AsOf = now
+		reset, err := gameControlReset(tx)
+		if err != nil {
+			return err
+		}
+		if !reset.At.IsZero() {
+			out.ResetAt = &reset.At
+		}
 		start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, model.Beijing)
 		out.Today = ProfitPeriod{Start: start, End: start.AddDate(0, 0, 1)}
 		out.Yesterday = ProfitPeriod{Start: start.AddDate(0, 0, -1), End: start}
@@ -108,15 +116,18 @@ func (s *Store) GameControlWithDraws(now time.Time, draws GameControlDrawReader)
 			rows[out.Sessions[i].SessionID] = &out.Sessions[i]
 		}
 		targets := map[string][]*ProfitPeriod{}
-		e = tx.Bucket([]byte("orders")).ForEach(func(_, v []byte) error {
+		e = tx.Bucket([]byte("orders")).ForEach(func(k, v []byte) error {
 			var o Order
 			if e := json.Unmarshal(v, &o); e != nil {
 				return e
 			}
 			row := rows[o.SessionID]
+			includeCards := reset.At.IsZero() || string(k) > reset.AfterOrderID
 			if o.Status == "pending" {
-				out.PendingAmount += o.Cost
-				out.PendingOrders++
+				if includeCards {
+					out.PendingAmount += o.Cost
+					out.PendingOrders++
+				}
 				if row != nil {
 					row.PendingAmount += o.Cost
 					row.PendingOrders++
@@ -136,7 +147,10 @@ func (s *Store) GameControlWithDraws(now time.Time, draws GameControlDrawReader)
 			if o.SettledAt.After(now) {
 				return nil
 			}
-			periods := []*ProfitPeriod{&out.Today, &out.Yesterday, &out.Month}
+			periods := []*ProfitPeriod{}
+			if includeCards {
+				periods = append(periods, &out.Today, &out.Yesterday, &out.Month)
+			}
 			if row != nil {
 				periods = append(periods, &row.Today)
 			}

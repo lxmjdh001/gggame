@@ -3,6 +3,7 @@ package accounts
 import (
 	bolt "go.etcd.io/bbolt"
 	"path/filepath"
+	"reflect"
 	"starlight/backend/internal/games"
 	"starlight/backend/internal/store"
 	"starlight/gameapi/pkg/model"
@@ -137,7 +138,7 @@ func TestGameControlPreviewDayRollover(t *testing.T) {
 	snapshot, e = s.GameControlWithDraws(now, db)
 	must(t, e)
 	for _, row := range snapshot.Sessions {
-		if row.SessionID == "lhc-daily" {
+		if g, _ := games.Find(row.SessionID); g.GameID == "lhc" {
 			continue
 		}
 		if row.Next == nil || row.Next.Issue != "202610120000" || row.NextEstimate.Net == nil || *row.NextEstimate.Net != 0 {
@@ -146,46 +147,88 @@ func TestGameControlPreviewDayRollover(t *testing.T) {
 	}
 }
 
-func TestRandomCandidateUsedByPayoutPreparationAndPublication(t *testing.T) {
-	s, _, at, _ := batchFixture(t, 1, 1)
-	defer s.Close()
-	db, e := store.Open(filepath.Join(t.TempDir(), "draws.db"))
-	must(t, e)
-	defer db.Close()
-	g, _ := games.Find("ffc-1")
-	issue := at.Format(model.IssueLayout)
-	source := previewSource(at.Add(-games.SourcePublishDelay))
-	must(t, db.CacheSources([]model.Draw{source}))
-	draft, e := db.RandomPreview(g, issue, "", true, at.Add(-6*time.Second))
-	must(t, e)
-	estimate, e := s.EstimateRound(draft.Candidate.Round)
-	must(t, e)
-	accepted, e := db.ApplyPreview(g, issue, draft.Candidate.ID, "admin", at.Add(-6*time.Second))
-	must(t, e)
-	must(t, s.discoverSettlementPlans(at.Add(-15*time.Second)))
-	plans, e := s.settlementPlans()
-	must(t, e)
-	if len(plans) != 1 {
-		t.Fatal("settlement plan missing")
-	}
-	p := plans[0]
-	must(t, s.prepareUsers(p, planUsers(p), db))
-	assertNoEarlyPayout(t, s)
-	if _, e = db.ApplyPreview(g, issue, draft.Candidate.ID, "admin", at.Add(-5*time.Second)); e == nil || e.Error() != "已超过开奖时间不可修改" {
-		t.Fatal("cutoff message mismatch", e)
-	}
-	original, e := games.Project(g, source, "scheduled")
-	must(t, e)
-	must(t, db.CommitLive([]games.Round{original}, issue))
-	published, e := db.Get(g.ID, issue)
-	must(t, e)
-	if digestResult(published) != digestResult(*accepted) {
-		t.Fatal("preview/publication mismatch")
-	}
-	must(t, s.commitUsers(p, planUsers(p), map[string]games.Round{g.ID: published}, at))
-	actual, e := s.GameControl(at)
-	must(t, e)
-	if estimate.Net == nil || actual.Today.Net != *estimate.Net || actual.Today.Payout != estimate.Payout || actual.Today.Commission != estimate.Commission {
-		t.Fatalf("random preview differs from payout: %+v / %+v", estimate, actual.Today)
+func TestAdoptedCandidateUsedByPayoutPreparationAndPublication(t *testing.T) {
+	for _, mode := range []string{"manual", "random1", "random5"} {
+		t.Run(mode, func(t *testing.T) {
+			s, accountPath, at, _ := batchFixture(t, 2, 1)
+			defer func() { s.Close() }()
+			drawPath := filepath.Join(t.TempDir(), "draws.db")
+			db, e := store.Open(drawPath)
+			must(t, e)
+			defer func() { db.Close() }()
+			g, _ := games.Find("ffc-1")
+			issue := at.Format(model.IssueLayout)
+			source := previewSource(at.Add(-games.SourcePublishDelay))
+			must(t, db.CacheSources([]model.Draw{source}))
+			var draft store.DrawPreview
+			if mode == "manual" {
+				current, err := db.PreviewRound(g, at)
+				must(t, err)
+				draft, e = db.ManualPreview(g, issue, []int{0, 1, 2, 3, 4}, current.Numbers, at.Add(-6*time.Second))
+			} else {
+				count := 1
+				if mode == "random5" {
+					count = 5
+				}
+				var drafts []store.DrawPreview
+				drafts, e = db.RandomPreviews(g, issue, nil, count, at.Add(-6*time.Second))
+				must(t, e)
+				if len(drafts) != count {
+					t.Fatal("candidate count mismatch")
+				}
+				draft = drafts[count-1]
+			}
+			must(t, e)
+			estimate, e := s.EstimateRound(draft.Candidate.Round)
+			must(t, e)
+			accepted, e := db.ApplyPreview(g, issue, draft.Candidate.ID, "admin", at.Add(-6*time.Second))
+			must(t, e)
+			// Adoption must survive restarting both stores before payout preparation.
+			must(t, db.Close())
+			db, e = store.Open(drawPath)
+			must(t, e)
+			must(t, s.Close())
+			s, e = Open(accountPath)
+			must(t, e)
+			if _, err := db.Get(g.ID, issue); err != store.ErrNotFound {
+				t.Fatal("published before draw")
+			}
+			must(t, s.discoverSettlementPlans(at.Add(-15*time.Second)))
+			plans, e := s.settlementPlans()
+			must(t, e)
+			if len(plans) != 1 {
+				t.Fatal("settlement plan missing")
+			}
+			p := plans[0]
+			must(t, s.prepareUsers(p, planUsers(p), db))
+			assertNoEarlyPayout(t, s)
+			if _, e = db.ApplyPreview(g, issue, draft.Candidate.ID, "admin", at.Add(-5*time.Second)); e == nil || e.Error() != "已超过开奖时间不可修改" {
+				t.Fatal("cutoff message mismatch", e)
+			}
+			original, e := games.Project(g, source, "scheduled")
+			must(t, e)
+			must(t, db.CommitLive([]games.Round{original}, issue))
+			published, e := db.Get(g.ID, issue)
+			must(t, e)
+			if digestResult(published) != digestResult(*accepted) {
+				t.Fatal("preview/publication mismatch")
+			}
+			must(t, s.commitUsers(p, planUsers(p), map[string]games.Round{g.ID: published}, at))
+			// Retrying posting must not duplicate balance credits or commissions.
+			first, e := s.Account("u000")
+			must(t, e)
+			must(t, s.commitUsers(p, planUsers(p), map[string]games.Round{g.ID: published}, at))
+			second, e := s.Account("u000")
+			must(t, e)
+			if !reflect.DeepEqual(first, second) {
+				t.Fatal("duplicate payout on retry")
+			}
+			actual, e := s.GameControl(at)
+			must(t, e)
+			if estimate.Net == nil || actual.Today.Net != *estimate.Net || actual.Today.Payout != estimate.Payout || actual.Today.Commission != estimate.Commission {
+				t.Fatalf("random preview differs from payout: %+v / %+v", estimate, actual.Today)
+			}
+
+		})
 	}
 }

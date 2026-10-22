@@ -3,23 +3,47 @@ package accounts
 import (
 	bolt "go.etcd.io/bbolt"
 	"sort"
+	"starlight/gameapi/pkg/model"
 	"strings"
+	"time"
 )
 
 type Member struct {
-	ID        string `json:"id"`
-	Username  string `json:"username"`
-	Level     int    `json:"level"`
-	CreatedAt string `json:"created_at"`
+	ID         string `json:"id"`
+	Username   string `json:"username"`
+	Level      int    `json:"level"`
+	CreatedAt  string `json:"created_at"`
+	Balance    int64  `json:"balance_cents"`
+	TodayStake int64  `json:"today_stake_cents"`
+}
+
+// Normalize only the old system-generated caption; keep the original ledger immutable.
+func ledgerForDisplay(v Ledger) Ledger {
+	if v.Kind == "registration_bonus" && v.Note == "注册赠送（开发测试）" {
+		v.Note = "注册赠送"
+	}
+	return v
 }
 
 func (s *Store) Account(id string) (map[string]any, error) {
+	return s.accountAt(id, time.Now())
+}
+
+func (s *Store) accountAt(id string, now time.Time) (map[string]any, error) {
+	local := now.In(model.Beijing)
+	dayStart := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, model.Beijing)
+	dayEnd := dayStart.AddDate(0, 0, 1)
 	out := map[string]any{}
 	err := s.db.View(func(tx *bolt.Tx) error {
 		u, e := active(tx, id)
 		if e != nil {
 			return e
 		}
+		progress, e := wagering(tx, id, nil)
+		if e != nil {
+			return e
+		}
+		out["wagering"] = progress
 		out["user"] = u.User
 		if u.InviterID != "" {
 			parent, err := get[storedUser](tx, "users", u.InviterID)
@@ -37,7 +61,7 @@ func (s *Store) Account(id string) (map[string]any, error) {
 		mine := []Ledger{}
 		for _, v := range entries {
 			if v.UserID == id {
-				mine = append(mine, v)
+				mine = append(mine, ledgerForDisplay(v))
 			}
 		}
 		if len(mine) > 200 {
@@ -62,16 +86,26 @@ func (s *Store) Account(id string) (map[string]any, error) {
 		if e != nil {
 			return e
 		}
+		todayStakes := map[string]int64{}
 		own := []Order{}
+		bettingFrozen := int64(0)
 		for _, v := range orders {
+			if (v.Status == "pending" || v.Status == "settled") && !v.CreatedAt.Before(dayStart) && v.CreatedAt.Before(dayEnd) {
+				todayStakes[v.UserID] += v.Cost
+			}
 			if v.UserID == id {
 				own = append(own, v)
+				if v.Status == "pending" {
+					bettingFrozen += v.Cost
+				}
 			}
 		}
 		if len(own) > 200 {
 			own = own[:200]
 		}
 		out["orders"] = own
+		// Includes every pending order, before the 200-row display limit, across all issues.
+		out["betting_frozen_cents"] = bettingFrozen
 		cs, e := list[Commission](tx, "commissions")
 		if e != nil {
 			return e
@@ -107,7 +141,7 @@ func (s *Store) Account(id string) (map[string]any, error) {
 			parent := v.InviterID
 			for level := 1; level <= 3 && parent != ""; level++ {
 				if parent == id {
-					members = append(members, Member{v.ID, v.Username, level, v.CreatedAt.Format("2006-01-02 15:04")})
+					members = append(members, Member{ID: v.ID, Username: v.Username, Level: level, CreatedAt: v.CreatedAt.Format("2006-01-02 15:04"), Balance: v.Balance, TodayStake: todayStakes[v.ID]})
 					counts[level-1]++
 					break
 				}
@@ -140,9 +174,19 @@ func (s *Store) AdminData(actor, resource, query string, page int) (map[string]a
 			if e != nil {
 				return e
 			}
+			orders, e := list[Order](tx, "orders")
+			if e != nil {
+				return e
+			}
+			bettingFrozen := map[string]int64{}
+			for _, o := range orders {
+				if o.Status == "pending" {
+					bettingFrozen[o.UserID] += o.Cost
+				}
+			}
 			sort.Slice(v, func(i, j int) bool { return v[i].CreatedAt.After(v[j].CreatedAt) })
 			for _, x := range v {
-				if match(x.Username, x.ID, x.InviteCode) {
+				if match(x.Username, x.ID, x.InviteCode, x.Phone, x.Name) {
 					if x.InviterID != "" {
 						parent, err := get[storedUser](tx, "users", x.InviterID)
 						if err != nil {
@@ -150,7 +194,10 @@ func (s *Store) AdminData(actor, resource, query string, page int) (map[string]a
 						}
 						x.InviterUsername = parent.Username
 					}
-					rows = append(rows, x.User)
+					rows = append(rows, struct {
+						User
+						BettingFrozen int64 `json:"betting_frozen_cents"`
+					}{x.User, bettingFrozen[x.ID]})
 				}
 			}
 		case "orders":
@@ -169,7 +216,7 @@ func (s *Store) AdminData(actor, resource, query string, page int) (map[string]a
 				return e
 			}
 			for _, x := range v {
-				if match(x.Username, x.ID, x.Status, x.Kind) {
+				if match(x.Username, x.ID, x.Status, x.Kind, x.PaymentMethod, x.PaymentNetwork, x.TransactionID) {
 					rows = append(rows, x)
 				}
 			}
@@ -204,7 +251,7 @@ func (s *Store) AdminData(actor, resource, query string, page int) (map[string]a
 					rows = append(rows, struct {
 						Ledger
 						Username string `json:"username"`
-					}{x, owner.Username})
+					}{ledgerForDisplay(x), owner.Username})
 				}
 			}
 		case "audit":
@@ -232,10 +279,11 @@ func (s *Store) AdminData(actor, resource, query string, page int) (map[string]a
 				return e
 			}
 			pendingOrders := 0
-			stake := int64(0)
+			stake, bettingFrozen := int64(0), int64(0)
 			for _, o := range orders {
 				if o.Status == "pending" {
 					pendingOrders++
+					bettingFrozen += o.Cost
 				}
 				if o.Status == "settled" && o.Outcome != "push" {
 					stake += o.Cost
@@ -259,21 +307,19 @@ func (s *Store) AdminData(actor, resource, query string, page int) (map[string]a
 			for _, c := range commissions {
 				ct += c.Amount
 			}
-			out = map[string]any{"users": len(users), "orders": len(orders), "pending_orders": pendingOrders, "pending_requests": pendingRequests, "balance_cents": balance, "frozen_cents": frozen, "valid_stake_cents": stake, "commission_cents": ct}
+			out = map[string]any{"users": len(users), "orders": len(orders), "pending_orders": pendingOrders, "pending_requests": pendingRequests, "balance_cents": balance, "frozen_cents": frozen, "betting_frozen_cents": bettingFrozen, "valid_stake_cents": stake, "commission_cents": ct}
 			return nil
 		default:
 			return ErrNotFound
 		}
 		out["total"] = len(rows)
-		out["page"] = page
-		start := (page - 1) * 20
-		if start > len(rows) {
-			start = len(rows)
+		size := 20
+		if resource == "orders" {
+			size = orderPageSize
 		}
-		end := start + 20
-		if end > len(rows) {
-			end = len(rows)
-		}
+		current, start, end := pageBounds(len(rows), page, size)
+		out["page"] = current
+		out["page_size"] = size
 		out["items"] = rows[start:end]
 		return nil
 	})

@@ -18,7 +18,7 @@ func mustLocation() *time.Location {
 }
 
 const IssueLayout = "200601021504"
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 type Rule struct {
 	ID          string `json:"id"`
@@ -38,17 +38,21 @@ func Rules() []Rule {
 		{ID: "g6", Min: 1, Max: 10, Count: 10, AllowRepeat: false},
 		{ID: "g7", Min: 1, Max: 49, Count: 49, AllowRepeat: false},
 		{ID: "g8", Min: 1, Max: 6, Count: 10, AllowRepeat: true},
+		{ID: "g9", Min: 1, Max: 49, Count: 49, AllowRepeat: false},
+		{ID: "g10", Min: 1, Max: 49, Count: 49, AllowRepeat: false},
+		{ID: "g11", Min: 1, Max: 49, Count: 49, AllowRepeat: false},
 	}
 }
 
 type Draw struct {
-	SchemaVersion int                 `json:"schema_version"`
-	Issue         string              `json:"issue"`
-	Timezone      string              `json:"timezone"`
-	ScheduledAt   time.Time           `json:"scheduled_at"`
-	GeneratedAt   time.Time           `json:"generated_at"`
-	Groups        map[string][]int    `json:"groups"`
-	DisplayGroups map[string][]string `json:"display_groups,omitempty"`
+	SchemaVersion    int                  `json:"schema_version"`
+	Issue            string               `json:"issue"`
+	Timezone         string               `json:"timezone"`
+	ScheduledAt      time.Time            `json:"scheduled_at"`
+	GeneratedAt      time.Time            `json:"generated_at"`
+	GroupGeneratedAt map[string]time.Time `json:"group_generated_at,omitempty"`
+	Groups           map[string][]int     `json:"groups"`
+	DisplayGroups    map[string][]string  `json:"display_groups,omitempty"`
 }
 type Selection struct {
 	Issue          string    `json:"issue"`
@@ -108,6 +112,8 @@ func Validate(d Draw) error {
 		rules = rules[:6]
 	} else if d.SchemaVersion == 2 {
 		rules = rules[:7]
+	} else if d.SchemaVersion <= 4 {
+		rules = rules[:8]
 	}
 	if len(d.Groups) != len(rules) {
 		return fmt.Errorf("unexpected groups for schema version")
@@ -125,6 +131,11 @@ func Validate(d Draw) error {
 			seen[value] = true
 		}
 	}
+	for group, at := range d.GroupGeneratedAt {
+		if d.SchemaVersion < 5 || (group != "g9" && group != "g10" && group != "g11") || at.IsZero() || at.Before(d.GeneratedAt) {
+			return fmt.Errorf("invalid supplemental generation time for %s", group)
+		}
+	}
 	return nil
 }
 func Select(d Draw, group string, positions []int) (Selection, error) {
@@ -139,6 +150,9 @@ func Select(d Draw, group string, positions []int) (Selection, error) {
 		}
 	}
 	result := Selection{Issue: d.Issue, Group: group, Positions: append([]int(nil), positions...), Numbers: make([]int, 0, len(positions)), ScheduledAt: d.ScheduledAt, GeneratedAt: d.GeneratedAt}
+	if at, ok := d.GroupGeneratedAt[group]; ok {
+		result.GeneratedAt = at
+	}
 	seen := map[int]bool{}
 	for _, position := range positions {
 		if position < 1 || position > len(numbers) || seen[position] {
@@ -154,7 +168,7 @@ func Select(d Draw, group string, positions []int) (Selection, error) {
 func Format(group string, numbers []int) []string {
 	out := make([]string, len(numbers))
 	for i, n := range numbers {
-		if group == "g6" || group == "g7" {
+		if group == "g6" || group == "g7" || group == "g9" || group == "g10" || group == "g11" {
 			out[i] = fmt.Sprintf("%02d", n)
 		} else {
 			out[i] = strconv.Itoa(n)

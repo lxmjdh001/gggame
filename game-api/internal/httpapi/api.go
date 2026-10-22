@@ -111,7 +111,7 @@ func (a *API) selection(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !valid {
-		fail(w, 400, "INVALID_GROUP", "group must be g1 through g8")
+		fail(w, 400, "INVALID_GROUP", "group must be g1 through g11")
 		return
 	}
 	positions := []int{}

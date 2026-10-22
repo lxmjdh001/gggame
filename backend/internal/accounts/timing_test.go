@@ -12,7 +12,7 @@ import (
 func TestNewAndLegacyOrdersRespectFullClosedWindow(t *testing.T) {
 	s, a := setup(t)
 	must(t, s.Adjust(a.ID, a.ID, 100000, "封盘测试", randomID()))
-	anchor := time.Date(2026, 10, 11, 21, 30, 5, 0, model.Beijing)
+	anchor := time.Date(2026, 10, 15, 21, 30, 5, 0, model.Beijing)
 	for _, g := range games.All() {
 		due := g.Due(anchor)
 		values := []int{1, 2, 3, 4, 5}
@@ -26,21 +26,31 @@ func TestNewAndLegacyOrdersRespectFullClosedWindow(t *testing.T) {
 		case "pc28":
 			values = []int{3}
 		}
-		for _, offset := range []time.Duration{-15*time.Second - time.Nanosecond, -15 * time.Second, -5 * time.Second, -4 * time.Second, -time.Nanosecond, 0} {
+		window := time.Duration(g.ClosedWindowSeconds()) * time.Second
+		for _, offset := range []time.Duration{-window - time.Nanosecond, -window, -15 * time.Second, -5 * time.Second, -4 * time.Second, -time.Nanosecond, 0} {
 			now := due.Add(offset)
-			expectedOpen := offset < -15*time.Second || offset == 0
+			expectedOpen := offset < -window || offset == 0
 			issue := due.Format(model.IssueLayout)
 			if offset == 0 {
 				issue = g.Next(now).Format(model.IssueLayout)
 			}
 			in := MarketOrderInput{SessionID: g.ID, Issue: issue, MarketID: "p1.big", OddsMilli: 1960, UnitCents: 200, Multiplier: 1, Key: randomID()}
+			if g.GameID == "k3" {
+				in.MarketID, in.OddsMilli = "k3v2.sum.big", 1000
+			}
+			if g.GameID == "lhc" {
+				in.MarketID, in.OddsMilli = "lhc6.p1.big", 1000
+			}
+			if g.ID == "lhc-au" {
+				in.MarketID, in.OddsMilli = "au45.p1.big", 1960
+			}
 			_, err := s.PlaceMarketOrder(a.ID, in, now)
 			if (err == nil) != expectedOpen {
 				t.Fatalf("market %s offset %s: %v", g.ID, offset, err)
 			}
 			old := OrderInput{SessionID: g.ID, Issue: issue, Numbers: values, UnitCents: 200, Multiplier: 1, Key: randomID()}
 			_, err = s.PlaceOrder(a.ID, old, now)
-			if (err == nil) != expectedOpen {
+			if (err == nil) != (expectedOpen && g.GameID != "lhc") {
 				t.Fatalf("legacy %s offset %s: %v", g.ID, offset, err)
 			}
 		}
@@ -75,7 +85,8 @@ func TestTimingSettingsMigrationPreservesOtherSettings(t *testing.T) {
 		if p.MaxStakeCents != 100000 {
 			t.Fatal("missing direct stake limit")
 		}
-		if p.CloseSeconds != 15 {
+		g, _ := games.Find(p.SessionID)
+		if p.CloseSeconds != g.ClosedWindowSeconds() {
 			t.Fatal("old timing survived migration")
 		}
 	}

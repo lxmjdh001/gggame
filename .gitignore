@@ -12,7 +12,5 @@ dist/
 *.log
 **/data/
 **/bin/
-/README.md
-/backend/README.md
-/game-api/README.md
-/backend/docs/*.md
+/output/
+**/admin-bootstrap.txt

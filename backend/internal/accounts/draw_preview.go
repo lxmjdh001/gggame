@@ -12,10 +12,15 @@ type randomDrawStore interface {
 	RandomPreview(games.Session, string, string, bool, time.Time) (drawstore.DrawPreview, error)
 	ApplyPreview(games.Session, string, string, string, time.Time) (*games.Round, error)
 }
+type manualDrawStore interface {
+	ManualPreview(games.Session, string, []int, []int, time.Time) (drawstore.DrawPreview, error)
+}
 type previewInput struct {
-	Issue       string `json:"issue"`
-	CandidateID string `json:"candidate_id"`
-	Random      bool   `json:"random"`
+	Numbers         []int  `json:"numbers"`
+	ExpectedNumbers []int  `json:"expected_numbers"`
+	Issue           string `json:"issue"`
+	CandidateID     string `json:"candidate_id"`
+	Random          bool   `json:"random"`
 }
 type previewResponse struct {
 	drawstore.DrawPreview
@@ -39,7 +44,22 @@ func (h *HTTP) previewDraw(w http.ResponseWriter, r *http.Request, u User) {
 		result(w, nil, errors.New("当前服务不支持随机预览"))
 		return
 	}
-	preview, err := draws.RandomPreview(g, in.Issue, in.CandidateID, in.Random, time.Time{})
+	var preview drawstore.DrawPreview
+	var err error
+	if in.Numbers != nil {
+		manual, ok := h.Draws.(manualDrawStore)
+		if !ok {
+			result(w, nil, errors.New("当前服务不支持手动修改号码"))
+			return
+		}
+		if in.Random || in.CandidateID != "" {
+			result(w, nil, errors.New("手动修改不能同时随机或指定预览编号"))
+			return
+		}
+		preview, err = manual.ManualPreview(g, in.Issue, in.Numbers, in.ExpectedNumbers, time.Time{})
+	} else {
+		preview, err = draws.RandomPreview(g, in.Issue, in.CandidateID, in.Random, time.Time{})
+	}
 	if err != nil {
 		result(w, nil, err)
 		return

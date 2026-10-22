@@ -8,6 +8,7 @@ import (
 	"fmt"
 	bolt "go.etcd.io/bbolt"
 	"math/big"
+	"slices"
 	"starlight/backend/internal/games"
 	"starlight/gameapi/pkg/model"
 	"time"
@@ -94,17 +95,11 @@ func editableDraw(g games.Session, issue string, now time.Time) (time.Time, erro
 	return at, nil
 }
 func sampleNumbers(g games.Session, base games.Round) (games.Round, error) {
-	var rule model.Rule
-	for _, r := range model.Rules() {
-		if r.ID == g.Group {
-			rule = r
-			break
-		}
-	}
+	rule := g.NumberRuleAt(base.DrawAt)
 	if rule.ID == "" {
 		return base, errors.New("号码规则不存在")
 	}
-	numbers := make([]int, len(g.Positions))
+	numbers := make([]int, rule.Count)
 	pool := make([]int, rule.Max-rule.Min+1)
 	for i := range pool {
 		pool[i] = rule.Min + i
@@ -127,6 +122,28 @@ func sampleNumbers(g games.Session, base games.Round) (games.Round, error) {
 			numbers[i] = pool[i]
 		}
 	}
+	return setNumbers(g, base, numbers)
+}
+
+func setNumbers(g games.Session, base games.Round, numbers []int) (games.Round, error) {
+	rule := g.NumberRuleAt(base.DrawAt)
+	if len(numbers) != rule.Count {
+		return base, fmt.Errorf("请输入%d个号码", rule.Count)
+	}
+	if rule.ID == "" {
+		return base, errors.New("号码规则不存在")
+	}
+	seen := map[int]bool{}
+	for _, n := range numbers {
+		if n < rule.Min || n > rule.Max {
+			return base, fmt.Errorf("号码必须在%d至%d之间", rule.Min, rule.Max)
+		}
+		if !rule.AllowRepeat && seen[n] {
+			return base, errors.New("该场次号码不可重复")
+		}
+		seen[n] = true
+	}
+	numbers = append([]int(nil), numbers...)
 	base.Numbers = numbers
 	base.DisplayNumbers = make([]string, len(numbers))
 	base.Sum = nil
@@ -147,11 +164,11 @@ func sampleNumbers(g games.Session, base games.Round) (games.Round, error) {
 func candidate(tx *bolt.Tx, id string) (*DrawCandidate, error) {
 	b := tx.Bucket(drawCandidates)
 	if b == nil {
-		return nil, errors.New("随机预览已失效，请重新随机")
+		return nil, errors.New("号码预览已失效，请重新生成预览")
 	}
 	raw := b.Get([]byte(id))
 	if raw == nil {
-		return nil, errors.New("随机预览已失效，请重新随机")
+		return nil, errors.New("号码预览已失效，请重新生成预览")
 	}
 	var c DrawCandidate
 	if err := json.Unmarshal(raw, &c); err != nil {
@@ -160,78 +177,116 @@ func candidate(tx *bolt.Tx, id string) (*DrawCandidate, error) {
 	return &c, nil
 }
 func checkCandidate(c *DrawCandidate, g games.Session, issue string, version int) error {
+	if _, err := setNumbers(g, c.Round, c.Round.Numbers); err != nil {
+		return errors.New("号码规则已更新，请重新生成预览")
+	}
 	if c.Round.SessionID != g.ID || c.Round.Issue != issue {
-		return errors.New("随机预览与场次期号不匹配")
+		return errors.New("号码预览与场次期号不匹配")
 	}
 	if c.BaseVersion != version {
-		return errors.New("该期号码已被其他操作修改，请重新随机")
+		return errors.New("该期号码已被其他操作修改，请重新生成预览")
 	}
 	return nil
 }
 
 // RandomPreview stores only a private draft; it never changes the effective draw.
 func (s *Store) RandomPreview(g games.Session, issue, id string, random bool, now time.Time) (DrawPreview, error) {
+	return s.drawPreview(g, issue, id, random, nil, nil, now)
+}
+
+// Manual drafts share the same cutoff, adoption transaction and audit as random drafts.
+func (s *Store) ManualPreview(g games.Session, issue string, numbers, expected []int, now time.Time) (DrawPreview, error) {
+	at, err := model.ParseIssue(issue)
+	if err != nil {
+		return DrawPreview{}, errors.New("开奖期号不正确")
+	}
+	count := g.NumberRuleAt(at).Count
+	if len(numbers) != count || len(expected) != count {
+		return DrawPreview{}, fmt.Errorf("请提供%d个新号码及原号码", count)
+	}
+	return s.drawPreview(g, issue, "", false, numbers, expected, now)
+}
+
+type drawSampler func(games.Session, games.Round) (games.Round, error)
+
+// Batch generation shares one transaction, so failures cannot leave partial drafts.
+func drawPreviewTx(tx *bolt.Tx, g games.Session, issue, id string, random bool, numbers, expected []int, now time.Time, sample drawSampler) (DrawPreview, error) {
+	var out DrawPreview
+	if now.IsZero() {
+		now = time.Now()
+	}
+	at, err := editableDraw(g, issue, now)
+	if err != nil {
+		return out, err
+	}
+	current, version, err := previewRound(tx, g, at)
+	if err != nil {
+		return out, err
+	}
+	if current == nil {
+		return out, errors.New("本期预生成号码尚未同步")
+	}
+	out = DrawPreview{Current: *current, CutoffAt: at.Truncate(time.Minute), ServerTime: now}
+	if numbers != nil && !slices.Equal(current.Numbers, expected) {
+		return out, errors.New("当前号码已变更，请关闭弹窗并刷新后重试")
+	}
+	if random || numbers != nil {
+		var round games.Round
+		if numbers != nil {
+			round, err = setNumbers(g, *current, numbers)
+		} else {
+			round, err = sample(g, *current)
+		}
+		if err != nil {
+			return out, err
+		}
+		token := make([]byte, 24)
+		if _, err = rand.Read(token); err != nil {
+			return out, err
+		}
+		out.Candidate = &DrawCandidate{ID: hex.EncodeToString(token), Round: round, BaseVersion: version}
+		b, err := tx.CreateBucketIfNotExists(drawCandidates)
+		if err != nil {
+			return out, err
+		}
+		// Expired drafts cannot be adopted and need not accumulate indefinitely.
+		cursor := b.Cursor()
+		for k, v := cursor.First(); k != nil; k, v = cursor.Next() {
+			var c DrawCandidate
+			if err = json.Unmarshal(v, &c); err != nil {
+				return out, err
+			}
+			if !now.Before(c.Round.DrawAt.Truncate(time.Minute)) {
+				if err = cursor.Delete(); err != nil {
+					return out, err
+				}
+			}
+		}
+		raw, err := json.Marshal(out.Candidate)
+		if err != nil {
+			return out, err
+		}
+		return out, b.Put([]byte(out.Candidate.ID), raw)
+	}
+	if id != "" {
+		out.Candidate, err = candidate(tx, id)
+		if err != nil {
+			return out, err
+		}
+		return out, checkCandidate(out.Candidate, g, issue, version)
+	}
+	return out, nil
+}
+
+func (s *Store) drawPreview(g games.Session, issue, id string, random bool, numbers, expected []int, now time.Time) (DrawPreview, error) {
 	var out DrawPreview
 	operation := func(tx *bolt.Tx) error {
-		if now.IsZero() {
-			now = time.Now()
-		}
-		at, err := editableDraw(g, issue, now)
-		if err != nil {
-			return err
-		}
-		current, version, err := previewRound(tx, g, at)
-		if err != nil {
-			return err
-		}
-		if current == nil {
-			return errors.New("本期预生成号码尚未同步")
-		}
-		out = DrawPreview{Current: *current, CutoffAt: at.Truncate(time.Minute), ServerTime: now}
-		if random {
-			round, err := sampleNumbers(g, *current)
-			if err != nil {
-				return err
-			}
-			token := make([]byte, 24)
-			if _, err = rand.Read(token); err != nil {
-				return err
-			}
-			out.Candidate = &DrawCandidate{ID: hex.EncodeToString(token), Round: round, BaseVersion: version}
-			b, err := tx.CreateBucketIfNotExists(drawCandidates)
-			if err != nil {
-				return err
-			}
-			// Expired drafts cannot be adopted and need not accumulate indefinitely.
-			cursor := b.Cursor()
-			for k, v := cursor.First(); k != nil; k, v = cursor.Next() {
-				var c DrawCandidate
-				if err = json.Unmarshal(v, &c); err != nil {
-					return err
-				}
-				if !now.Before(c.Round.DrawAt.Truncate(time.Minute)) {
-					if err = cursor.Delete(); err != nil {
-						return err
-					}
-				}
-			}
-			raw, err := json.Marshal(out.Candidate)
-			if err != nil {
-				return err
-			}
-			return b.Put([]byte(out.Candidate.ID), raw)
-		}
-		if id != "" {
-			out.Candidate, err = candidate(tx, id)
-			if err != nil {
-				return err
-			}
-			return checkCandidate(out.Candidate, g, issue, version)
-		}
-		return nil
+		var err error
+		out, err = drawPreviewTx(tx, g, issue, id, random, numbers, expected, now, sampleNumbers)
+		return err
 	}
 	var err error
-	if random {
+	if random || numbers != nil {
 		err = s.db.Update(operation)
 	} else {
 		err = s.db.View(operation)

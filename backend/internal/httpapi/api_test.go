@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -42,8 +43,9 @@ func TestSessionAPI(t *testing.T) {
 	if err = json.Unmarshal(w.Body.Bytes(), &state); err != nil {
 		t.Fatal(err)
 	}
-	if state.Data.NextDrawAt.Hour() != 21 || state.Data.NextDrawAt.Minute() != 30 || state.Data.Latest == nil || len(state.Data.Latest.Numbers) != 7 {
-		t.Fatal("daily draw metadata mismatch")
+	g, _ := games.Find("lhc-daily")
+	if !state.Data.NextDrawAt.Equal(g.Next(state.Data.ServerTime)) || !state.Data.BetCloseAt.Equal(g.CloseAt(state.Data.NextDrawAt)) || state.Data.Latest == nil || len(state.Data.Latest.Numbers) != 7 {
+		t.Fatal("regional draw metadata mismatch")
 	}
 	first, _ := db.History("pc28-5", 20, "")
 	second, _ := db.History("pc28-5", 20, first.NextBefore)
@@ -71,11 +73,20 @@ func TestPreparedDrawOnlyVisibleToAdmin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, userToken, err := accountDB.Register("preview_user", password, "")
+	_, userToken, err := accountDB.Register("preview_user", password, "", "13800138000", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	g, _ := games.Find("lhc-daily")
+	// HTTP draw edits use the real clock. During the final seconds of an
+	// issue (including the 00–05 publication gap), Next still points at a
+	// draw whose editing deadline has passed or is about to pass. Start the
+	// fixture in the next full window instead of racing that deadline.
+	now := time.Now()
+	due := g.Next(now)
+	if due.Add(-games.SourcePublishDelay).Sub(now) < 10*time.Second {
+		time.Sleep(time.Until(due) + 10*time.Millisecond)
+	}
 	at := g.Next(time.Now()).Add(-games.SourcePublishDelay)
 	d := model.Draw{SchemaVersion: model.SchemaVersion, Issue: at.Format(model.IssueLayout), Timezone: "Asia/Shanghai", ScheduledAt: at, GeneratedAt: at.Add(-24 * time.Hour), Groups: map[string][]int{}}
 	for _, rule := range model.Rules() {
@@ -117,8 +128,8 @@ func TestPreparedDrawOnlyVisibleToAdmin(t *testing.T) {
 			}
 		}
 	}
-	// Both new actions require admin authentication and same-origin JSON.
-	for _, action := range []string{"preview", "apply"} {
+	// Draw actions require admin authentication and same-origin JSON.
+	for _, action := range []string{"preview", "preview-batch", "apply"} {
 		for _, tc := range []struct {
 			token, origin string
 			status        int
@@ -135,6 +146,71 @@ func TestPreparedDrawOnlyVisibleToAdmin(t *testing.T) {
 			handler.ServeHTTP(w, r)
 			if w.Code != tc.status {
 				t.Fatalf("%s access returned %d instead of %d", action, w.Code, tc.status)
+			}
+		}
+	}
+
+	for _, count := range []int{0, 1, 5, 2, 6} {
+		body := fmt.Sprintf(`{"issue":%q,"count":%d}`, d.Issue, count)
+		req := httptest.NewRequest("POST", "http://localhost/api/v1/admin/game-control/lhc-daily/preview-batch", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: "starlight_session", Value: adminToken})
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		expected := 200
+		if count == 2 || count == 6 {
+			expected = 400
+		}
+		if w.Code != expected {
+			t.Fatalf("batch %d returned %d: %s", count, w.Code, w.Body.String())
+		}
+		if expected == 200 {
+			var response model.Envelope[struct {
+				Current    games.Round `json:"current"`
+				Candidates []struct {
+					Candidate store.DrawCandidate   `json:"candidate"`
+					Estimate  accounts.NextEstimate `json:"estimate"`
+				} `json:"candidates"`
+			}]
+			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if len(response.Data.Candidates) != count || response.Data.Current.Issue != d.Issue {
+				t.Fatal("incorrect batch response")
+			}
+			for _, candidate := range response.Data.Candidates {
+				if len(candidate.Candidate.Round.Numbers) != 7 || candidate.Estimate.Net == nil || *candidate.Estimate.Net != 0 {
+					t.Fatal("invalid marksix batch")
+				}
+			}
+		}
+	}
+	// Manual drafts use the same protected route and remain private until adopted.
+	for _, tc := range []struct {
+		token, extra string
+		status       int
+	}{
+		{"", "", 401}, {userToken, "", 403}, {adminToken, "", 200},
+		{adminToken, `,"random":true`, 400},
+	} {
+		body := `{"issue":"` + d.Issue + `","numbers":[7,6,5,4,3,2,1],"expected_numbers":[1,2,3,4,5,6,7]` + tc.extra + `}`
+		req := httptest.NewRequest("POST", "http://localhost/api/v1/admin/game-control/lhc-daily/preview", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		if tc.token != "" {
+			req.AddCookie(&http.Cookie{Name: "starlight_session", Value: tc.token})
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != tc.status {
+			t.Fatalf("manual preview: got %d want %d: %s", w.Code, tc.status, w.Body.String())
+		}
+		if tc.status == 200 {
+			var response model.Envelope[store.DrawPreview]
+			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.Data.Candidate == nil || response.Data.Candidate.Round.Numbers[0] != 7 || response.Data.Current.Numbers[0] != 1 {
+				t.Fatal("manual preview response incorrect")
 			}
 		}
 	}

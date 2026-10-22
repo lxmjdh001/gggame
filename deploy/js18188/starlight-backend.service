@@ -1,0 +1,30 @@
+[Unit]
+Description=Starlight game and account backend
+Wants=starlight-source.service
+After=network.target starlight-source.service
+
+[Service]
+Type=simple
+User=starlight
+Group=starlight
+WorkingDirectory=/opt/starlight
+Environment=TZ=Asia/Shanghai
+Environment=BACKEND_ADDR=127.0.0.1:8082
+Environment=BACKEND_DB=/var/lib/starlight/backend/games.db
+Environment=ACCOUNTS_DB=/var/lib/starlight/backend/accounts.db
+Environment=GAME_API_URL=http://127.0.0.1:8081
+Environment=GAME_API_TOKEN_FILE=/var/lib/starlight/source/source-api.token
+Environment=COOKIE_SECURE=true
+ExecStart=/opt/starlight/current/bin/backend
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/starlight/backend
+
+[Install]
+WantedBy=multi-user.target

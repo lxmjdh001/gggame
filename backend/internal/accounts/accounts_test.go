@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-const testPassword = "test-password-12345"
+const testPassword = "Test-password-12345"
 
 func setup(t *testing.T) (*Store, User) {
 	t.Helper()
@@ -36,7 +36,7 @@ func setup(t *testing.T) (*Store, User) {
 }
 func register(t *testing.T, s *Store, name, invite string) User {
 	t.Helper()
-	u, _, e := s.Register(name, testPassword, invite)
+	u, _, e := s.Register(name, testPassword, invite, "13800138000", "")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -274,7 +274,7 @@ func TestOrderRulesAndPermissions(t *testing.T) {
 }
 func TestHTTPAuthOriginAndDataIsolation(t *testing.T) {
 	s, admin := setup(t)
-	u := register(t, s, "http_user", "")
+	u, _ := loginSecurityRegister(t, s, "httpuser", securityTestQuestion, securityTestAnswer)
 	other := register(t, s, "other_user", "")
 	_, token, e := s.Login(u.Username, testPassword)
 	must(t, e)
@@ -331,17 +331,22 @@ func TestHTTPAuthOriginAndDataIsolation(t *testing.T) {
 		t.Fatal(w.Body.String())
 	}
 	cookies := w.Result().Cookies()
-	if len(cookies) != 1 || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode {
-		t.Fatal("session cookie not protected")
+	formal := loginSecurityCookie(cookies, "starlight_session")
+	if formal == nil || formal.Value == "" || !formal.HttpOnly || formal.SameSite != http.SameSiteStrictMode || formal.Path != "/" {
+		t.Fatal("direct login did not issue protected session")
 	}
 	var raw map[string]any
 	must(t, json.Unmarshal(w.Body.Bytes(), &raw))
-	validRegistration := fmt.Sprintf(`{"username":"http_new_user","password":%q,"invite_code":%q}`, testPassword, u.InviteCode)
-	registered := call("POST", "/api/v1/auth/register", "", "http://localhost:5173", validRegistration)
+	if raw["data"].(map[string]any)["id"] != u.ID {
+		t.Fatal("direct login did not return authenticated user")
+	}
+	validRegistration, e := json.Marshal(secureRegistrationFields(t, s, map[string]string{"username": "httpnewuser", "password": testPassword, "invite_code": u.InviteCode, "phone": "13800138000"}))
+	must(t, e)
+	registered := call("POST", "/api/v1/auth/register", "", "http://localhost:5173", string(validRegistration))
 	if registered.Code != 200 || !strings.Contains(registered.Body.String(), u.ID) {
 		t.Fatal("registration failed to bind inviter", registered.Body.String())
 	}
-	if len(registered.Result().Cookies()) != 1 {
+	if session := loginSecurityCookie(registered.Result().Cookies(), "starlight_session"); session == nil || session.Value == "" || session.MaxAge <= 0 {
 		t.Fatal("registration did not issue session")
 	}
 	for i := 0; i < 16; i++ {

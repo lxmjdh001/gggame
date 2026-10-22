@@ -57,7 +57,20 @@ func planUsers(p settlementPlan) []settlementUser {
 	return users
 }
 
-// Freeze membership once betting is closed, including every session sharing the issue.
+// An issue can contain sessions with different betting deadlines. Only freeze
+// membership after the LAST matching session closes; otherwise late valid bets
+// in another game could be omitted from an already-created plan.
+func settlementMembershipCloseAt(at time.Time) time.Time {
+	latest := time.Time{}
+	for _, g := range games.All() {
+		if g.Matches(at) && g.CloseAt(at).After(latest) {
+			latest = g.CloseAt(at)
+		}
+	}
+	return latest
+}
+
+// Freeze membership once every session sharing the issue is closed.
 // Refunds may remove obligations later; membership remains stable across restarts.
 func (s *Store) discoverSettlementPlans(now time.Time) error {
 	// Most ticks have no newly closed orders; avoid an unnecessary write/fsync.
@@ -78,7 +91,7 @@ func (s *Store) discoverSettlementPlans(now time.Time) error {
 			if e != nil {
 				return e
 			}
-			needed = !now.Before(at.Add(games.SourcePublishDelay - 15*time.Second))
+			needed = !now.Before(settlementMembershipCloseAt(at.Add(games.SourcePublishDelay)))
 			return nil
 		})
 	}); err != nil {
@@ -110,7 +123,7 @@ func (s *Store) discoverSettlementPlans(now time.Time) error {
 			if !g.Matches(at) {
 				return fmt.Errorf("invalid pending issue boundary")
 			}
-			if now.Before(g.CloseAt(at)) {
+			if now.Before(settlementMembershipCloseAt(at)) {
 				return nil
 			}
 			if groups[o.Issue] == nil {

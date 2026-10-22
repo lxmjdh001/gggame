@@ -52,7 +52,7 @@ func run() error {
 	server := &http.Server{Handler: (&httpapi.API{Store: store, Token: token, Logger: logger}).Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	result := make(chan error, 1)
 	go func() { result <- server.Serve(listener) }()
-	logger.Info("game API started", "address", listener.Addr().String(), "next_scheduled_at", scheduler.NextDay(time.Now()), "groups", 8)
+	logger.Info("game API started", "address", listener.Addr().String(), "next_scheduled_at", scheduler.NextDay(time.Now()), "groups", 11)
 	select {
 	case <-ctx.Done():
 	case err = <-result:

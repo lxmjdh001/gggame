@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"starlight/backend/internal/accounts"
 	"starlight/backend/internal/engine"
+	"starlight/backend/internal/games"
 	"starlight/backend/internal/httpapi"
 	"starlight/backend/internal/store"
 	"starlight/gameapi/pkg/apikey"
@@ -92,7 +93,7 @@ func run() error {
 	srv := &http.Server{Handler: (&httpapi.API{Store: db, Accounts: accountHTTP}).Handler(), ReadHeaderTimeout: 5 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
 	ch := make(chan error, 1)
 	go func() { ch <- srv.Serve(listener) }()
-	logger.Info("game backend started", "address", listener.Addr().String(), "sessions", 10)
+	logger.Info("game backend started", "address", listener.Addr().String(), "sessions", len(games.All()))
 	select {
 	case <-ctx.Done():
 	case err = <-ch:

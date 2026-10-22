@@ -60,6 +60,31 @@ func TestAPIAndGoClient(t *testing.T) {
 	if err != nil || len(history.Items) != 1 {
 		t.Fatal("history failed")
 	}
+	for _, id := range []string{"g7", "g9", "g10", "g11"} {
+		full, err := c.Select(ctx, d.Issue, id, nil)
+		if err != nil || len(full.Numbers) != 49 {
+			t.Fatalf("%s full group: %v", id, err)
+		}
+		seven, err := c.Select(ctx, d.Issue, id, []int{1, 2, 3, 4, 5, 6, 7})
+		if err != nil || !reflect.DeepEqual(seven.Numbers, d.Groups[id][:7]) {
+			t.Fatalf("%s seven results: %v", id, err)
+		}
+		last, err := c.Select(ctx, d.Issue, id, []int{49})
+		if err != nil || last.Numbers[0] != d.Groups[id][48] || len(last.DisplayNumbers[0]) != 2 {
+			t.Fatalf("%s last position: %v", id, err)
+		}
+	}
+	legacy, err := generator.New().Generate(at.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy.SchemaVersion = 4
+	for _, id := range []string{"g9", "g10", "g11"} {
+		delete(legacy.Groups, id)
+	}
+	if err = s.Save(legacy); err != nil {
+		t.Fatal(err)
+	}
 	cases := []struct {
 		path, token, method string
 		status              int
@@ -72,7 +97,11 @@ func TestAPIAndGoClient(t *testing.T) {
 		{"/api/v1/draws/latest/groups/g6?positions=10", "test-token", "GET", 200},
 		{"/api/v1/draws/latest/groups/g1?positions=1,1", "test-token", "GET", 400},
 		{"/api/v1/draws/latest/groups/g1?positions=", "test-token", "GET", 400},
-		{"/api/v1/draws/latest/groups/g9", "test-token", "GET", 400},
+		{"/api/v1/draws/latest/groups/g12", "test-token", "GET", 400},
+		{"/api/v1/draws/latest/groups/g9?positions=50", "test-token", "GET", 400},
+		{"/api/v1/draws/latest/groups/g10?positions=7,7", "test-token", "GET", 400},
+		{"/api/v1/draws/latest/groups/g11", "", "GET", 401},
+		{"/api/v1/draws/" + legacy.Issue + "/groups/g9", "test-token", "GET", 404},
 		{"/api/v1/draws?limit=101", "test-token", "GET", 400},
 		{"/api/v1/draws?before=invalid", "test-token", "GET", 400},
 		{"/api/v1/draws/latest", "test-token", "POST", 405},
@@ -102,7 +131,7 @@ func TestAPIAndGoClient(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	var metadata model.Envelope[model.Metadata]
-	if err = json.NewDecoder(resp.Body).Decode(&metadata); err != nil || len(metadata.Data.Rules) != 8 || metadata.Data.TriggerSecond != 0 || metadata.Data.IntervalSeconds != 86400 {
+	if err = json.NewDecoder(resp.Body).Decode(&metadata); err != nil || len(metadata.Data.Rules) != 11 || metadata.Data.TriggerSecond != 0 || metadata.Data.IntervalSeconds != 86400 {
 		t.Fatal("metadata mismatch")
 	}
 }

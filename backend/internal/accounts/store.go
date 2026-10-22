@@ -17,6 +17,8 @@ import (
 	"starlight/gameapi/pkg/model"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 var ErrUnauthorized = errors.New("请先登录")
@@ -43,10 +45,25 @@ func Open(path string) (*Store, error) {
 				return e
 			}
 		}
+		if e := initializePayments(tx); e != nil {
+			return e
+		}
+		if e := initializeWithdrawals(tx); e != nil {
+			return e
+		}
+		if e := migrateInviteCodes(tx); e != nil {
+			return e
+		}
 		if e := initializeIssueStakes(tx); e != nil {
 			return e
 		}
 		if e := seedPromotions(tx); e != nil {
+			return e
+		}
+		if e := seedHelpArticles(tx); e != nil {
+			return e
+		}
+		if e := migrateAustraliaRules(tx); e != nil {
 			return e
 		}
 		for _, g := range games.All() {
@@ -63,9 +80,50 @@ func Open(path string) (*Store, error) {
 				for _, q := range quotes {
 					seen[q.MarketID] = true
 				}
-				added := []string{}
-				for _, q := range defaultQuotes(g) {
+				defaults := defaultQuotes(g)
+				quotes, added := initializeMissingTierOdds(quotes, defaults)
+				for _, q := range defaults {
 					if !seen[q.MarketID] {
+						if g.GameID == "lhc" {
+							q = inheritMarkSixV6Quote(q, quotes)
+						}
+						if g.GameID == "k3" && strings.HasPrefix(q.MarketID, "k3v3.") {
+							// Preserve the configured price and switch while replacing only the
+							// single/double contract; accepted v2 snapshots keep their old quote.
+							previousID := strings.Replace(q.MarketID, "k3v3.", "k3v2.", 1)
+							for _, old := range quotes {
+								if old.MarketID == previousID {
+									q.OddsMilli, q.Enabled = old.OddsMilli, old.Enabled
+									break
+								}
+							}
+						}
+
+						if g.GameID == "pk10" && strings.HasPrefix(q.MarketID, "size3.sum.") {
+							// Carry forward the latest configured odds and enabled state.
+							// Keep retired quotes for historical order snapshots.
+							baseID := strings.TrimPrefix(q.MarketID, "size3.")
+							inherited := false
+							for _, previousID := range []string{"size2." + baseID, baseID} {
+								for _, old := range quotes {
+									if old.MarketID == previousID {
+										q.OddsMilli, q.Enabled = old.OddsMilli, old.Enabled
+										inherited = true
+										break
+									}
+								}
+								if inherited {
+									break
+								}
+							}
+						}
+						if strings.HasPrefix(q.MarketID, "parity2.") || strings.HasPrefix(q.MarketID, "size2.") {
+							for _, old := range quotes {
+								if old.MarketID == strings.TrimPrefix(strings.TrimPrefix(q.MarketID, "parity2."), "size2.") {
+									q.OddsMilli, q.Enabled = old.OddsMilli, old.Enabled
+								}
+							}
+						}
 						quotes = append(quotes, q)
 						added = append(added, q.MarketID)
 					}
@@ -87,6 +145,23 @@ func Open(path string) (*Store, error) {
 		if e != nil {
 			return e
 		}
+		// Add new sessions without replacing existing limits, switches or account settings.
+		known := map[string]bool{}
+		for _, play := range cfg.Plays {
+			known[play.SessionID] = true
+		}
+		addedSessions := []string{}
+		for _, play := range defaults().Plays {
+			if !known[play.SessionID] {
+				cfg.Plays = append(cfg.Plays, play)
+				addedSessions = append(addedSessions, play.SessionID)
+			}
+		}
+		if len(addedSessions) > 0 {
+			if e = audit(tx, "system", "sessions.initialize", "global", strings.Join(addedSessions, ",")); e != nil {
+				return e
+			}
+		}
 		changed := false
 		amountChanged := false
 		issueLimitChanged := false
@@ -99,17 +174,18 @@ func Open(path string) (*Store, error) {
 				cfg.Plays[i].MaxStakeCents = max(int64(100000), cfg.Plays[i].UnitCents)
 				amountChanged = true
 			}
-			if cfg.Plays[i].CloseSeconds != games.ClosedWindowSeconds {
-				cfg.Plays[i].CloseSeconds = games.ClosedWindowSeconds
+			g, ok := games.Find(cfg.Plays[i].SessionID)
+			if ok && cfg.Plays[i].CloseSeconds != g.ClosedWindowSeconds() {
+				cfg.Plays[i].CloseSeconds = g.ClosedWindowSeconds()
 				changed = true
 			}
 		}
-		if changed || amountChanged || issueLimitChanged {
+		if changed || amountChanged || issueLimitChanged || len(addedSessions) > 0 {
 			if e = put(tx, "settings", "global", cfg); e != nil {
 				return e
 			}
 			if changed {
-				if e = audit(tx, "system", "timing.update", "global", "整分前10秒封盘、后05秒开奖；封盘窗口固定15秒"); e != nil {
+				if e = audit(tx, "system", "timing.update", "global", "六合彩八场周期更新：大马5分钟、悉尼15分钟、台湾20分钟、极速1分钟、五分5分钟、十分10分钟、印尼20分钟、越南20分钟；极速提前10秒封盘，其余提前1分钟；保留历史期号与00–05秒结算流程"); e != nil {
 					return e
 				}
 			}
@@ -178,9 +254,9 @@ func seq(tx *bolt.Tx, b string) string {
 	return fmt.Sprintf("%020d", n)
 }
 func defaults() Settings {
-	v := Settings{Registration: true, Announcement: "欢迎来到星彩娱乐。账户与开奖记录已同步至服务器。", Plays: []PlaySetting{}}
+	v := Settings{Registration: true, Announcement: "欢迎来到星彩娱乐。请留意各场次开奖时间，投注前查看玩法说明。", Plays: []PlaySetting{}}
 	for _, g := range games.All() {
-		v.Plays = append(v.Plays, PlaySetting{SessionID: g.ID, Enabled: true, UnitCents: 200, MaxMultiplier: 99, CloseSeconds: games.ClosedWindowSeconds, MaxStakeCents: 100000, UserIssueLimitCents: defaultUserIssueLimit})
+		v.Plays = append(v.Plays, PlaySetting{SessionID: g.ID, Enabled: true, UnitCents: 200, MaxMultiplier: 99, CloseSeconds: g.ClosedWindowSeconds(), MaxStakeCents: 100000, UserIssueLimitCents: defaultUserIssueLimit})
 	}
 	return v
 }
@@ -214,10 +290,10 @@ func (s *Store) Bootstrap(username, password string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	err = s.db.Update(func(tx *bolt.Tx) error { _, e := createUser(tx, username, h, salt, "", "admin"); return e })
+	err = s.db.Update(func(tx *bolt.Tx) error { _, e := createUser(tx, username, h, salt, "", "admin", "", ""); return e })
 	return err == nil, err
 }
-func createUser(tx *bolt.Tx, username, h, salt, invite, role string) (User, error) {
+func createUser(tx *bolt.Tx, username, h, salt, invite, role, phone, name string) (User, error) {
 	if tx.Bucket([]byte("usernames")).Get([]byte(strings.ToLower(username))) != nil {
 		return User{}, errors.New("用户名已存在")
 	}
@@ -232,7 +308,11 @@ func createUser(tx *bolt.Tx, username, h, salt, invite, role string) (User, erro
 			return User{}, errors.New("邀请人账户不可用")
 		}
 	}
-	u := storedUser{User: User{ID: randomID(), Username: username, Role: role, Status: "active", InviteCode: strings.ToUpper(randomID()[:12]), InviterID: inviter, CreatedAt: time.Now()}, Hash: h, PasswordSalt: salt}
+	code, err := newInviteCode(tx)
+	if err != nil {
+		return User{}, err
+	}
+	u := storedUser{User: User{ID: randomID(), Username: username, Phone: phone, Name: name, Role: role, Status: "active", InviteCode: code, InviterID: inviter, CreatedAt: time.Now()}, Hash: h, PasswordSalt: salt}
 	if e := put(tx, "users", u.ID, u); e != nil {
 		return User{}, e
 	}
@@ -258,8 +338,26 @@ func newLogin(tx *bolt.Tx, id string) (string, error) {
 	token := randomID()
 	return token, put(tx, "logins", tokenKey(token), Login{id, time.Now().Add(7 * 24 * time.Hour)})
 }
-func (s *Store) Register(username, password, invite string) (User, string, error) {
+
+var phonePattern = regexp.MustCompile(`^(1[3-9][0-9]{9}|\+[1-9][0-9]{6,14})$`)
+
+func (s *Store) Register(username, password, invite, phone, name string) (User, string, error) {
+	return s.register(username, password, invite, phone, name, nil)
+}
+
+func (s *Store) register(username, password, invite, phone, name string, security *registrationSecurity) (User, string, error) {
 	invite = strings.TrimSpace(invite)
+	phone = strings.TrimSpace(phone)
+	name = strings.TrimSpace(name)
+	if phone == "" {
+		return User{}, "", errors.New("请填写手机号")
+	}
+	if !phonePattern.MatchString(phone) {
+		return User{}, "", errors.New("请输入11位手机号，或带+国家区号的手机号码")
+	}
+	if utf8.RuneCountInString(name) > 40 || strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		return User{}, "", errors.New("姓名最多40个字符，不能包含控制字符")
+	}
 	if !usernamePattern.MatchString(username) || !passwordValid(password) {
 		return User{}, "", errors.New("用户名需4–32位字母数字下划线，密码需10–128位")
 	}
@@ -281,16 +379,31 @@ func (s *Store) Register(username, password, invite string) (User, string, error
 		if cfg.InviteRequired && invite == "" {
 			return errors.New("注册需要邀请码，请填写有效邀请码")
 		}
-		u, err = createUser(tx, username, h, salt, invite, "user")
+		u, err = createUser(tx, username, h, salt, invite, "user", phone, name)
 		if err != nil {
 			return err
+		}
+		if security != nil {
+			stored, e := get[storedUser](tx, "users", u.ID)
+			if e != nil {
+				return e
+			}
+			stored.Wechat = security.Wechat
+			stored.WithdrawalPasswordSet = true
+			stored.WithdrawalHash, stored.WithdrawalSalt = security.Hash, security.Salt
+			stored.SecurityQuestionSet = security.SecurityHash != "" && security.SecuritySalt != ""
+			stored.SecurityQuestionID, stored.SecurityHash, stored.SecuritySalt = security.SecurityQuestionID, security.SecurityHash, security.SecuritySalt
+			if e = put(tx, "users", stored.ID, stored); e != nil {
+				return e
+			}
+			u = stored.User
 		}
 		if cfg.RegistrationBonusCents > 0 {
 			stored, e := get[storedUser](tx, "users", u.ID)
 			if e != nil {
 				return e
 			}
-			if e = ledger(tx, &stored, cfg.RegistrationBonusCents, 0, "registration_bonus", u.ID, "注册赠送（开发测试）"); e != nil {
+			if e = ledger(tx, &stored, cfg.RegistrationBonusCents, 0, "registration_bonus", u.ID, "注册赠送"); e != nil {
 				return e
 			}
 			u = stored.User
@@ -382,7 +495,7 @@ func revoke(tx *bolt.Tx, id string) error {
 			}
 		}
 	}
-	return nil
+	return invalidateLoginSecurity(tx, id)
 }
 func (s *Store) ChangePassword(id, old, next string) error {
 	if !passwordValid(next) {
@@ -443,6 +556,10 @@ func ledger(tx *bolt.Tx, u *storedUser, amount, frozen int64, kind, reference, n
 func (s *Store) Settings() (Settings, error) {
 	var v Settings
 	e := s.db.View(func(tx *bolt.Tx) error { var e error; v, e = get[Settings](tx, "settings", "global"); return e })
+	// Present the current default copy without rewriting saved settings or custom announcements.
+	if v.Announcement == "欢迎来到星彩娱乐。账户与开奖记录已同步至服务器。" {
+		v.Announcement = defaults().Announcement
+	}
 	return v, e
 }
 func (s *Store) SaveSettings(actor string, cfg Settings) error {
@@ -467,8 +584,8 @@ func (s *Store) SaveSettings(actor string, cfg Settings) error {
 		if p.MaxStakeCents < p.UnitCents || p.MaxStakeCents > 100000000 {
 			return errors.New("单笔投注上限必须不低于起投金额，且不超过100万元")
 		}
-		_, ok := games.Find(p.SessionID)
-		if !ok || seen[p.SessionID] || p.UnitCents < 1 || p.UnitCents > 1000000 || p.MaxMultiplier < 1 || p.MaxMultiplier > 999 || p.CloseSeconds != games.ClosedWindowSeconds {
+		g, ok := games.Find(p.SessionID)
+		if !ok || seen[p.SessionID] || p.UnitCents < 1 || p.UnitCents > 1000000 || p.MaxMultiplier < 1 || p.MaxMultiplier > 999 || p.CloseSeconds != g.ClosedWindowSeconds() {
 			return errors.New("玩法参数不正确")
 		}
 		seen[p.SessionID] = true
@@ -572,6 +689,11 @@ func (s *Store) Adjust(actor, id string, amount int64, note, key string) error {
 	})
 }
 func (s *Store) CreateRequest(id string, in RequestInput) (WalletRequest, error) {
+	return s.createRequest(id, in, "", false)
+}
+
+func (s *Store) createRequest(id string, in RequestInput, transactionID string, requireDepositID bool) (WalletRequest, error) {
+	transactionID = strings.TrimSpace(transactionID)
 	var out WalletRequest
 	if (in.Kind != "deposit" && in.Kind != "withdraw") || in.Amount < 100 || in.Amount > 100000000 || len(strings.TrimSpace(in.Note)) < 2 || len(in.Note) > 500 {
 		return out, errors.New("请输入有效金额（1–1,000,000元）和说明")
@@ -587,9 +709,21 @@ func (s *Store) CreateRequest(id string, in RequestInput) (WalletRequest, error)
 		}
 		if ref != "" {
 			out, e = get[WalletRequest](tx, "requests", ref)
+			if e == nil && requireDepositID && out.TransactionID != transactionID {
+				return errors.New("该申请已提交，交易 ID 与原申请不一致")
+			}
 			return e
 		}
+		// Resolve historical idempotent retries before requiring the new field.
+		// RequestInput remains the original digest; the saved transaction ID
+		// additionally binds new manual-deposit retries to the same proof.
+		if requireDepositID && (in.Kind != "deposit" || transactionID == "" || len(transactionID) > 128 || strings.IndexFunc(transactionID, unicode.IsControl) >= 0) {
+			return errors.New("请填写交易 ID，最多128字节且不能含换行或控制字符")
+		}
 		out = WalletRequest{ID: seq(tx, "requests"), UserID: id, Username: u.Username, Kind: in.Kind, Amount: in.Amount, Note: in.Note, Status: "pending", CreatedAt: time.Now()}
+		if requireDepositID {
+			out.TransactionID = transactionID
+		}
 		if in.Kind == "withdraw" {
 			if e = ledger(tx, &u, -in.Amount, in.Amount, "withdraw_hold", out.ID, in.Note); e != nil {
 				return e
@@ -624,6 +758,14 @@ func (s *Store) ReviewRequest(actor, id, decision, note string) error {
 		if decision == "approved" && u.Status != "active" {
 			return errors.New("账户已停用，请先恢复或驳回申请")
 		}
+		if decision == "approved" {
+			if e = approveWithdrawalWager(tx, r); e != nil {
+				return e
+			}
+			if e = validateUSDTApproval(tx, r); e != nil {
+				return e
+			}
+		}
 		amount, frozen := int64(0), int64(0)
 		if r.Kind == "deposit" && decision == "approved" {
 			amount = r.Amount
@@ -648,6 +790,9 @@ func (s *Store) ReviewRequest(actor, id, decision, note string) error {
 	})
 }
 func validateNumbers(g games.Session, n []int) bool {
+	return validateNumbersAt(g, n, g.Next(time.Now()))
+}
+func validateNumbersAt(g games.Session, n []int, drawAt time.Time) bool {
 	count, low, high, unique := 5, 0, 9, false
 	switch g.GameID {
 	case "ssc":
@@ -670,6 +815,9 @@ func validateNumbers(g games.Session, n []int) bool {
 		count = 1
 		high = 27
 	}
+	if g.GameID == "lhc" {
+		high = g.NumberRuleAt(drawAt).Max
+	}
 	if len(n) != count {
 		return false
 	}
@@ -685,7 +833,7 @@ func validateNumbers(g games.Session, n []int) bool {
 func (s *Store) PlaceOrder(id string, in OrderInput, now time.Time) (Order, error) {
 	var out Order
 	g, ok := games.Find(in.SessionID)
-	if !ok || !validateNumbers(g, in.Numbers) {
+	if !ok {
 		return out, errors.New("场次或所选号码不正确")
 	}
 	err := s.db.Update(func(tx *bolt.Tx) error {
@@ -705,6 +853,13 @@ func (s *Store) PlaceOrder(id string, in OrderInput, now time.Time) (Order, erro
 			out, e = get[Order](tx, "orders", ref)
 			return e
 		}
+		if g.GameID == "lhc" {
+			return errors.New("六合彩六号单式已下架，请刷新后使用最新玩法")
+		}
+		due := g.Next(now)
+		if !validateNumbersAt(g, in.Numbers, due) {
+			return errors.New("场次或所选号码不正确")
+		}
 		cfg, e := get[Settings](tx, "settings", "global")
 		if e != nil {
 			return e
@@ -721,7 +876,6 @@ func (s *Store) PlaceOrder(id string, in OrderInput, now time.Time) (Order, erro
 		if !p.Enabled {
 			return errors.New("该玩法已暂停")
 		}
-		due := g.Next(now)
 		if in.Issue != due.Format(model.IssueLayout) || !g.BettingOpen(now) {
 			return errors.New("本期已封盘或期号已更新，请刷新")
 		}
