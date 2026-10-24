@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-const testPassword = "Test-password-12345"
+const testPassword = "Test-pass-12345"
 
 func setup(t *testing.T) (*Store, User) {
 	t.Helper()
@@ -267,7 +267,7 @@ func TestOrderRulesAndPermissions(t *testing.T) {
 	}
 	_, token, e = s.Login(u.Username, testPassword)
 	must(t, e)
-	must(t, s.ChangePassword(u.ID, testPassword, "new-password-12345"))
+	must(t, s.ChangePassword(u.ID, testPassword, "new-pass-12345"))
 	if _, e = s.Authenticate(token); e == nil {
 		t.Fatal("password change did not revoke sessions")
 	}

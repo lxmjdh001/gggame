@@ -206,6 +206,14 @@ func usdtAmountCents(quantity, rate string) (int64, error) {
 
 func usdtTransactionID(network, value string) (string, error) {
 	value = strings.TrimSpace(value)
+	if (network == "TRC20" || network == "ERC20") && len(value) == 5 {
+		for _, c := range value {
+			if !strings.ContainsRune("0123456789abcdefABCDEF", c) {
+				return "", errors.New("请填写交易 ID 后5位（十六进制字符）")
+			}
+		}
+		return strings.ToLower(value), nil
+	}
 	switch network {
 	case "TRC20":
 		if transactionPattern.MatchString(value) {
@@ -216,7 +224,15 @@ func usdtTransactionID(network, value string) (string, error) {
 			return strings.ToLower(value), nil
 		}
 	}
-	return "", errors.New("请填写完整交易 ID：TRC20 为 64 位十六进制，ERC20 为 0x 开头的 64 位十六进制")
+	return "", errors.New("请填写交易 ID 后5位；历史完整交易哈希仍兼容")
+}
+
+// A suffix is only a manual reconciliation hint, never a globally unique hash.
+func usdtRequestTransactionKey(network, transactionID, requestID string) string {
+	if len(transactionID) == 5 {
+		return network + ":suffix:" + requestID
+	}
+	return usdtTransactionKey(network, transactionID)
 }
 
 func usdtTransactionKey(network, transactionID string) string {
@@ -282,7 +298,7 @@ func (s *Store) createUSDTRequest(id string, in WalletSubmission) (WalletRequest
 		}
 		index := tx.Bucket([]byte("payment_transactions"))
 		transactionKey := usdtTransactionKey(cfg.Network, transactionID)
-		if ref := index.Get([]byte(transactionKey)); ref != nil {
+		if ref := index.Get([]byte(transactionKey)); len(transactionID) != 5 && ref != nil {
 			previous, err := get[WalletRequest](tx, "requests", string(ref))
 			if err != nil {
 				return err
@@ -296,6 +312,7 @@ func (s *Store) createUSDTRequest(id string, in WalletSubmission) (WalletRequest
 		if err = put(tx, "requests", out.ID, out); err != nil {
 			return err
 		}
+		transactionKey = usdtRequestTransactionKey(cfg.Network, transactionID, out.ID)
 		if err = index.Put([]byte(transactionKey), []byte(out.ID)); err != nil {
 			return err
 		}
@@ -318,7 +335,7 @@ func validateUSDTApproval(tx *bolt.Tx, r WalletRequest) error {
 	if err != nil || amount != r.Amount {
 		return errors.New("USDT 充值金额与汇率快照不符，无法入账")
 	}
-	ref := tx.Bucket([]byte("payment_transactions")).Get([]byte(usdtTransactionKey(r.PaymentNetwork, transactionID)))
+	ref := tx.Bucket([]byte("payment_transactions")).Get([]byte(usdtRequestTransactionKey(r.PaymentNetwork, transactionID, r.ID)))
 	if string(ref) != r.ID {
 		return errors.New("交易 ID 已被其他申请使用或缺少关联，无法重复入账")
 	}

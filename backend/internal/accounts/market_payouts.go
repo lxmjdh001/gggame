@@ -38,7 +38,39 @@ func validateMarketQuote(m markets.Market, q Quote) error {
 	if q.MarketID != m.ID || q.OddsMilli < 1000 || q.OddsMilli > 1000000 {
 		return errors.New("赔率必须为1.000–1000.000")
 	}
+	if q.CurrentZodiacOddsMilli != 0 && (!supportsCurrentZodiacOdds(m) || q.CurrentZodiacOddsMilli < 1000 || q.CurrentZodiacOddsMilli > 1000000) {
+		return errors.New("本年生肖赔率仅适用于生肖玩法，范围为1.000–1000.000")
+	}
+	if q.ZeroTailOddsMilli != 0 && (m.Kind != "lhc_link_tail" || q.ZeroTailOddsMilli < 1000 || q.ZeroTailOddsMilli > 1000000) {
+		return errors.New("含0尾赔率仅适用于尾数连，范围为1.000–1000.000")
+	}
 	return validateTierOdds(m, q.TierOddsMilli)
+}
+
+func supportsCurrentZodiacOdds(m markets.Market) bool {
+	return m.RuleVersion == 6 && (m.Kind == "lhc_zodiac" || m.Selection != nil && m.Selection.Type == "zodiac")
+}
+
+func selectionQuoteOdds(m markets.Market, q Quote) int64 {
+	if q.CurrentZodiacOddsMilli != 0 && supportsCurrentZodiacOdds(m) && m.ZodiacYear != 0 {
+		current := markets.MarkSixZodiac(1, m.ZodiacYear)
+		if m.Selection == nil && m.Pick == fmt.Sprint(current) {
+			return q.CurrentZodiacOddsMilli
+		}
+		for _, v := range m.SelectionValues {
+			if v == current {
+				return q.CurrentZodiacOddsMilli
+			}
+		}
+	}
+	if q.ZeroTailOddsMilli != 0 && m.Kind == "lhc_link_tail" {
+		for _, v := range m.SelectionValues {
+			if v == 0 {
+				return q.ZeroTailOddsMilli
+			}
+		}
+	}
+	return q.OddsMilli
 }
 
 func maximumQuoteOdds(q Quote) int64 {

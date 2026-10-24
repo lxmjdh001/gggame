@@ -264,7 +264,13 @@ func hash(password, salt string) (string, error) {
 	b, err := pbkdf2.Key(sha256.New, password, []byte(salt), 600000, 32)
 	return hex.EncodeToString(b), err
 }
-func passwordValid(p string) bool { return len(p) >= 10 && len(p) <= 128 }
+
+const passwordMinLength = 8
+const passwordMaxLength = 16
+
+// New credentials use the current policy; Login deliberately keeps its legacy
+// 128-byte verification limit so existing long passwords remain usable.
+func passwordValid(p string) bool { return len(p) >= passwordMinLength && len(p) <= passwordMaxLength }
 
 var usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_]{4,32}$`)
 
@@ -283,7 +289,7 @@ func (s *Store) Bootstrap(username, password string) (bool, error) {
 		return false, err
 	}
 	if !usernamePattern.MatchString(username) || !passwordValid(password) {
-		return false, errors.New("管理员用户名需4–32位字母数字下划线，密码需10–128位")
+		return false, errors.New("管理员用户名需4–32位字母数字下划线，密码需8–16位")
 	}
 	salt := randomID()
 	h, err := hash(password, salt)
@@ -336,7 +342,7 @@ func newLogin(tx *bolt.Tx, id string) (string, error) {
 		}
 	}
 	token := randomID()
-	return token, put(tx, "logins", tokenKey(token), Login{id, time.Now().Add(7 * 24 * time.Hour)})
+	return token, put(tx, "logins", tokenKey(token), Login{UserID: id, Expires: time.Now().Add(7 * 24 * time.Hour)})
 }
 
 var phonePattern = regexp.MustCompile(`^(1[3-9][0-9]{9}|\+[1-9][0-9]{6,14})$`)
@@ -359,7 +365,7 @@ func (s *Store) register(username, password, invite, phone, name string, securit
 		return User{}, "", errors.New("姓名最多40个字符，不能包含控制字符")
 	}
 	if !usernamePattern.MatchString(username) || !passwordValid(password) {
-		return User{}, "", errors.New("用户名需4–32位字母数字下划线，密码需10–128位")
+		return User{}, "", errors.New("用户名需4–32位字母数字下划线，密码需8–16位")
 	}
 	salt := randomID()
 	h, e := hash(password, salt)
@@ -499,7 +505,7 @@ func revoke(tx *bolt.Tx, id string) error {
 }
 func (s *Store) ChangePassword(id, old, next string) error {
 	if !passwordValid(next) {
-		return errors.New("新密码需10–128位")
+		return errors.New("新密码需8–16位")
 	}
 	var before storedUser
 	err := s.db.View(func(tx *bolt.Tx) error { var e error; before, e = active(tx, id); return e })
@@ -659,10 +665,28 @@ func remember(tx *bolt.Tx, scope, key, id string, body any) error {
 	return put(tx, "keys", scope+key, map[string]string{"Digest": tokenKey(string(b)), "ID": id})
 }
 func (s *Store) Adjust(actor, id string, amount int64, note, key string) error {
+	return s.adjust(actor, id, amount, note, key, "admin_adjust")
+}
+
+func (s *Store) AdjustWithKind(actor, id string, amount int64, note, key, kind string) error {
+	switch kind {
+	case "deposit":
+		return s.adjust(actor, id, amount, note, key, "admin_deposit")
+	case "reward":
+		return s.adjust(actor, id, amount, note, key, "admin_reward")
+	default:
+		return errors.New("请选择充值或奖励")
+	}
+}
+
+func (s *Store) adjust(actor, id string, amount int64, note, key, kind string) error {
 	if amount == 0 || amount > 100000000 || amount < -100000000 || len(strings.TrimSpace(note)) < 2 || len(note) > 500 {
 		return errors.New("调整金额或原因不正确")
 	}
 	body := []any{id, amount, note}
+	if kind != "admin_adjust" {
+		body = append(body, kind)
+	}
 	return s.db.Update(func(tx *bolt.Tx) error {
 		if e := admin(tx, actor); e != nil {
 			return e
@@ -679,13 +703,17 @@ func (s *Store) Adjust(actor, id string, amount int64, note, key string) error {
 			return e
 		}
 		ref = randomID()
-		if e = ledger(tx, &u, amount, 0, "admin_adjust", ref, note); e != nil {
+		if e = ledger(tx, &u, amount, 0, kind, ref, note); e != nil {
 			return e
 		}
 		if e = remember(tx, "adjust:"+actor, key, ref, body); e != nil {
 			return e
 		}
-		return audit(tx, actor, "balance.adjust", id, fmt.Sprintf("%d分；%s", amount, note))
+		detail := fmt.Sprintf("%d分；%s", amount, note)
+		if kind != "admin_adjust" {
+			detail = kind + "；" + detail
+		}
+		return audit(tx, actor, "balance.adjust", id, detail)
 	})
 }
 func (s *Store) CreateRequest(id string, in RequestInput) (WalletRequest, error) {
@@ -843,6 +871,9 @@ func (s *Store) PlaceOrder(id string, in OrderInput, now time.Time) (Order, erro
 		}
 		u, e := active(tx, id)
 		if e != nil {
+			return e
+		}
+		if e = requireGameAccess(tx, id, in.gameToken, now); e != nil {
 			return e
 		}
 		ref, e := idem(tx, "order:"+id, in.Key, in)

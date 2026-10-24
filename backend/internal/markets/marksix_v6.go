@@ -53,7 +53,7 @@ func EvaluateDetailed(m Market, g games.Session, r games.Round) (Evaluation, err
 }
 
 func markSixV6Catalog() []Market {
-	all := make([]Market, 0, 650)
+	all := make([]Market, 0, 720)
 	add := func(id, group, label, ui, kind, pick, rule string, positions []int, push bool) *Market {
 		m := Market{ID: "lhc6." + id, Group: group, Label: label, Category: "regular", Kind: kind, Pick: pick, Positions: append([]int(nil), positions...), Rule: rule, RuleVersion: 6, DefaultOdds: 1000, UIGroup: ui}
 		if push {
@@ -105,6 +105,20 @@ func markSixV6Catalog() []Market {
 			all = append(all, Market{ID: fmt.Sprintf("p%d.n%d", p, n), Group: exactGroup, Label: fmt.Sprintf("%02d", n), Category: "regular", Kind: "number", Positions: append([]int(nil), positions...), Pick: strconv.Itoa(n), Rule: "仅比较所选位置的开奖号码，其他位置不影响本注。", RuleVersion: Version, DefaultOdds: 48020, UIGroup: exactUI})
 		}
 	}
+	// 正特码 has its own two-sided/color contracts. Never reuse the quote IDs
+	// of 正特1–6: administrators price the two offerings independently, and
+	// accepted historical snapshots must retain their original identity.
+	var positionSpecial []Market
+	for _, m := range all {
+		if m.UIGroup != "position_faces" {
+			continue
+		}
+		m.ID = strings.Replace(m.ID, "lhc6.", "lhc6.position_special.", 1)
+		m.Group = strings.Replace(m.Group, "正码", "正特码", 1)
+		m.UIGroup = "position_numbers"
+		positionSpecial = append(positionSpecial, m)
+	}
+	all = append(all, positionSpecial...)
 	for _, x := range faces {
 		kind := "lhc_size"
 		if x.pick == "odd" || x.pick == "even" {
@@ -126,6 +140,9 @@ func markSixV6Catalog() []Market {
 	for _, color := range colors {
 		for _, face := range faces {
 			add("special.half."+color.pick+"_"+face.pick, "特码半波", color.label+face.label, "half_wave", "lhc_half_wave", color.pick+"_"+face.pick, "特码同时符合色波与大小或单双才中奖，01–24小、25–48大；49时所有半波退本。", []int{7}, true)
+		}
+		for _, face := range faces[2:] {
+			add("special.halfdigit."+color.pick+"_"+face.pick, "特码半波合数", color.label+"合"+face.label, "half_wave", "lhc_half_digit", color.pick+"_"+face.pick, "特码同时符合色波及十位与个位之和的单双才中奖；49时全部退本。", []int{7}, true)
 		}
 		for _, x := range combos {
 			add("special.halfhalf."+color.pick+"_"+x.pick, "特码半半波", color.label+x.label, "special", "lhc_half_half_wave", color.pick+"_"+x.pick, "特码同时符合色波、大小及单双才中奖；49时所有半半波退本。", []int{7}, true)
@@ -193,13 +210,16 @@ func markSixV6Catalog() []Market {
 		}
 	}
 	for count := 2; count <= 5; count++ {
-		combination(fmt.Sprintf("link_zodiac.%d", count), "连肖", fmt.Sprintf("%d连肖", count), "linked_zodiac", "lhc_link_zodiac", strconv.Itoa(count), "全部所选生肖都须出现在开奖七球中，才算本组合中奖；同肖多次只派一次，49正常判奖。", "zodiac", "combination", count, 12, seven, false)
+		combination(fmt.Sprintf("link_zodiac.%d", count), "连肖", fmt.Sprintf("%d连肖中", count), "linked_zodiac", "lhc_link_zodiac", strconv.Itoa(count), "全部所选生肖都须出现在开奖七球中，才算本组合中奖；同肖多次只派一次，49正常判奖。", "zodiac", "combination", count, 12, seven, false)
 		combination(fmt.Sprintf("link_tail.%d", count), "尾数连", fmt.Sprintf("%d连尾", count), "linked_tail", "lhc_link_tail", strconv.Itoa(count), "全部所选尾数都须出现在开奖七球中，才算本组合中奖；同尾多次只派一次，49正常判奖。", "tail", "combination", count, 10, seven, false)
+	}
+	for count := 2; count <= 4; count++ {
+		combination(fmt.Sprintf("miss_zodiac.%d", count), "连肖不中", fmt.Sprintf("%d连肖不中", count), "linked_zodiac", "lhc_miss_zodiac", strconv.Itoa(count), "全部所选生肖均未出现在开奖七球中才中奖，任一生肖开出即输；49参与判奖。", "zodiac", "combination", count, 12, seven, false)
 	}
 	for count := 2; count <= 11; count++ {
 		combination(fmt.Sprintf("combined_zodiac.in.%d", count), "合肖", fmt.Sprintf("%d肖中", count), "combined_zodiac", "lhc_combined_zodiac", "in", "2–11个不同生肖合为一注，仅特码生肖在组内即中奖，前六正码不参与；特码49时退回本金。", "zodiac", "set", count, count, []int{7}, true)
 	}
-	for count := 5; count <= 11; count++ {
+	for count := 5; count <= 12; count++ {
 		combination(fmt.Sprintf("miss.%d", count), "全不中", fmt.Sprintf("%d不中", count), "miss", "lhc_miss", strconv.Itoa(count), "本组所有号码均未出现在正码及特码中才中奖，任一个开出即输；49参与判奖。复式各组分别计费及判奖。", "number", "combination", count, 49, seven, false)
 	}
 	return all
@@ -220,7 +240,7 @@ func sameMarkSixV6Contract(m, expected Market) bool {
 }
 func markSixV6ZodiacMarket(m Market) bool {
 	switch m.Kind {
-	case "lhc_zodiac", "lhc_zodiac_count", "lhc_zodiac_group", "lhc_total_zodiac", "lhc_link_zodiac", "lhc_combined_zodiac":
+	case "lhc_zodiac", "lhc_zodiac_count", "lhc_zodiac_group", "lhc_total_zodiac", "lhc_link_zodiac", "lhc_miss_zodiac", "lhc_combined_zodiac":
 		return true
 	}
 	return false
@@ -352,6 +372,9 @@ func evaluateMarkSixV6(m Market, numbers []int, drawAt time.Time) (Evaluation, e
 	case "lhc_half_wave":
 		parts := strings.Split(m.Pick, "_")
 		win = MarkSixColor(n) == parts[0] && face(n, parts[1])
+	case "lhc_half_digit":
+		parts := strings.Split(m.Pick, "_")
+		win = MarkSixColor(n) == parts[0] && face(n/10+n%10, parts[1])
 	case "lhc_half_half_wave":
 		parts := strings.Split(m.Pick, "_")
 		win = MarkSixColor(n) == parts[0] && face(n, parts[1]) && face(n, parts[2])
@@ -445,10 +468,10 @@ func evaluateMarkSixV6(m Market, numbers []int, drawAt time.Time) (Evaluation, e
 		default:
 			return Evaluation{}, errors.New("不支持的连码规则")
 		}
-	case "lhc_link_zodiac", "lhc_link_tail":
+	case "lhc_link_zodiac", "lhc_link_tail", "lhc_miss_zodiac":
 		classes := map[int]bool{}
 		for _, v := range numbers {
-			if m.Kind == "lhc_link_zodiac" {
+			if m.Kind != "lhc_link_tail" {
 				classes[MarkSixZodiac(v, m.ZodiacYear)] = true
 			} else {
 				classes[v%10] = true
@@ -456,7 +479,11 @@ func evaluateMarkSixV6(m Market, numbers []int, drawAt time.Time) (Evaluation, e
 		}
 		win = true
 		for _, v := range values {
-			win = win && classes[v]
+			if m.Kind == "lhc_miss_zodiac" {
+				win = win && !classes[v]
+			} else {
+				win = win && classes[v]
+			}
 		}
 	case "lhc_combined_zodiac":
 		zodiac := MarkSixZodiac(numbers[6], m.ZodiacYear)

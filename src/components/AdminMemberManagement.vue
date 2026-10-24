@@ -2,6 +2,7 @@
 import {ref,onMounted,onUnmounted,nextTick} from 'vue'
 import {X,RefreshCw} from 'lucide-vue-next'
 import {api} from '../api/account'
+import {validNewPasswordLength} from '../lib/passwordPolicy'
 const props=defineProps<{member:{id:string;username:string};action:'password'|'descendants'}>()
 const emit=defineEmits<{close:[];saved:[];notify:[message:string]}>()
 interface Preview {username:string;revision:string;total?:number;active?:number;disabled?:number}
@@ -12,7 +13,7 @@ async function save(){
  if(!preview.value||loading.value||saving.value)return
  error.value=''
  if(props.action==='password'){
-  if(password.value.length<10||password.value.length>128||!/[A-Z]/.test(password.value)||!/[a-z]/.test(password.value)){error.value='新登录密码需10–128位，且同时包含大写和小写字母';return}
+  if(!validNewPasswordLength(password.value)||!/[A-Z]/.test(password.value)||!/[a-z]/.test(password.value)){error.value='新登录密码需8–16位，且同时包含大写和小写字母';return}
   if(password.value!==confirmation.value){error.value='两次输入的新密码不一致';return}
  }
  saving.value=true
@@ -38,8 +39,8 @@ onUnmounted(()=>{active=false;password.value='';confirmation.value='';previousFo
   <p v-if="loading" class="loading-line" role="status">正在读取会员信息…</p>
   <form v-if="preview" class="form-stack" @submit.prevent="save">
    <template v-if="action==='password'">
-    <label>新登录密码<input v-model="password" type="password" autocomplete="new-password" required minlength="10" maxlength="128" :disabled="saving" placeholder="10–128位，须包含大写和小写字母"/></label>
-    <label>确认新登录密码<input v-model="confirmation" type="password" autocomplete="new-password" required minlength="10" maxlength="128" :disabled="saving" placeholder="请再次输入新登录密码"/></label>
+    <label>新登录密码<input v-model="password" type="password" autocomplete="new-password" required minlength="8" maxlength="16" :disabled="saving" placeholder="8–16位，须包含大写和小写字母"/></label>
+    <label>确认新登录密码<input v-model="confirmation" type="password" autocomplete="new-password" required minlength="8" maxlength="16" :disabled="saving" placeholder="请再次输入新登录密码"/></label>
     <p class="form-hint">修改后，该会员所有设备的登录会话将退出。提现密码保持不变。</p>
    </template>
    <template v-else>

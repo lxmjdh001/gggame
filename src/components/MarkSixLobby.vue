@@ -25,7 +25,7 @@ const controller = new AbortController()
 async function load() {
  loading.value = true; error.value = ''
  try {
-  const data = await getJSON<{sessions: Session[]}>('/api/v1/games', AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]))
+  const data = await getJSON<{sessions: Session[]}>('/api/v1/games', controller.signal)
   sessions.value = data.sessions.filter(s => s.game_id === 'lhc')
   if (!sessions.value.length) throw new Error('暂时没有可用场次')
  } catch (e) {if (!controller.signal.aborted) error.value = (e as Error).message}

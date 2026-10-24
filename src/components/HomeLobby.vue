@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { Bell, ChevronRight, CircleDollarSign, Clock3, Crown, FilePenLine, Flame, Headphones, Heart, Pause, Play, RefreshCw, Search, Volume2, Wallet, X } from 'lucide-vue-next'
+import { Bell, ChevronRight, CircleDollarSign, Crown, FilePenLine, Flame, Headphones, Heart, Pause, Play, RefreshCw, Search, Volume2, Wallet, X } from 'lucide-vue-next'
 import { games, isGameAvailable, type Game } from '../data'
 import { getJSON, type Session } from '../api/games'
 import { sessionPeriod } from '../lib/sessionSchedule'
@@ -26,7 +26,7 @@ const controller = new AbortController()
 async function loadSessions() {
  loading.value = true; error.value = ''
  try {
-  const data = await getJSON<{ sessions: Session[] }>('/api/v1/games', AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]))
+  const data = await getJSON<{ sessions: Session[] }>('/api/v1/games', controller.signal)
   sessions.value = data.sessions.filter(session => session.game_id === 'lhc' || session.game_id === 'k3')
   if (!sessions.value.length) error.value = '暂无可用场次'
  } catch (e) { if (!controller.signal.aborted) error.value = (e as Error).message }
@@ -49,7 +49,7 @@ function openPromotion(action: string) { if (action === 'deposit') emit('wallet'
 function promotionFocusOut(event: FocusEvent) { promotionFocused.value = event.currentTarget instanceof HTMLElement && event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget) }
 onMounted(() => { void loadSessions(); startPromotionTimer() })
 onUnmounted(() => { controller.abort(); clearInterval(promotionTimer) })
-const search = computed(() => query.value.trim().toLowerCase().replaceAll('快3','快三'))
+const search = computed(() => query.value.trim().toLowerCase().replace(/快3/g,'快三'))
 const regions = computed(() => sessions.value.filter(session =>
  (!search.value || session.game_name.toLowerCase().includes(search.value)) &&
  (category.value !== 'favorites' || props.favoriteIds.includes(session.game_id) || isSessionFavorite(session))
@@ -73,7 +73,6 @@ function regionColor(session:Session) {
  return regionColors[index % regionColors.length]
 }
 function selectGame(game: Game) {
- if (!isGameAvailable(game.id)) return
  if (game.id === 'lhc' || game.id === 'k3') expandedGame.value = expandedGame.value === game.id ? '' : game.id
  else emit('game', game)
 }
@@ -139,9 +138,9 @@ function favoriteSession(session:Session) {
      </div>
     </section>
     <div class="lobby-other-grid">
-     <article v-for="game in remainingGames" :key="game.id" class="lobby-game-tile" :class="[game.id,{'coming-soon':!isGameAvailable(game.id)}]" :style="{'--accent':game.accent}" :aria-label="!isGameAvailable(game.id)?`${game.name}，敬请期待`:undefined" :aria-disabled="!isGameAvailable(game.id)||undefined">
-      <template v-if="isGameAvailable(game.id)"><button class="lobby-tile-link" :aria-label="`进入${game.name}`" @click="selectGame(game)"><h2>{{game.name}}</h2><span class="lobby-tile-caption">{{game.subtitle}}</span><GameArtwork :game="game"/></button><button class="lobby-tile-favorite" :aria-label="`${favoriteIds.includes(game.id)?'取消收藏':'收藏'}${game.name}`" :aria-pressed="favoriteIds.includes(game.id)" @click="emit('favorite',game.id)"><Heart :size="13" :fill="favoriteIds.includes(game.id)?'currentColor':'none'"/></button></template>
-      <div v-else class="lobby-coming-soon"><Clock3 :size="30" aria-hidden="true"/><h2>敬请期待</h2></div>
+     <article v-for="game in remainingGames" :key="game.id" class="lobby-game-tile" :class="game.id" :style="{'--accent':game.accent}">
+      <button class="lobby-tile-link" :aria-label="isGameAvailable(game.id)?`进入${game.name}`:`${game.name}，敬请期待`" :aria-haspopup="!isGameAvailable(game.id)?'dialog':undefined" @click="selectGame(game)"><h2>{{game.name}}</h2><span class="lobby-tile-caption">{{game.subtitle}}</span><GameArtwork :game="game"/></button>
+      <button v-if="isGameAvailable(game.id)" class="lobby-tile-favorite" :aria-label="`${favoriteIds.includes(game.id)?'取消收藏':'收藏'}${game.name}`" :aria-pressed="favoriteIds.includes(game.id)" @click="emit('favorite',game.id)"><Heart :size="13" :fill="favoriteIds.includes(game.id)?'currentColor':'none'"/></button>
      </article>
     </div>
     <div v-if="!visibleGames.length" class="lobby-empty"><Search :size="27"/><strong>{{category==='favorites'?'暂无收藏':'未找到相关游戏'}}</strong><p>{{category==='favorites'?'点击卡片上的爱心收藏游戏':'试试搜索游戏或地区名称'}}</p><button @click="category='all';query=''">查看全部游戏</button></div>
@@ -151,7 +150,6 @@ function favoriteSession(session:Session) {
 </template>
 
 <style scoped>
-.lobby-other-grid .lobby-game-tile.coming-soon{background:linear-gradient(135deg,#f4f1fa,#e7e3f0);border-color:#eee9f5}.lobby-coming-soon{display:flex;height:100%;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#8b819e}.lobby-coming-soon svg{color:#a99dbb;stroke-width:1.5}.lobby-coming-soon h2{margin:0;font-size:16px;font-weight:500;letter-spacing:2px}
 .lobby-session-heading{display:flex;align-items:center;gap:7px;margin:8px 2px 3px;font-size:12px;color:#756279;font-weight:600}.lobby-session-heading span{font-size:10px;font-weight:400;color:#9a889c}.lobby-session-group.k3 .lobby-regions{grid-template-columns:repeat(3,minmax(0,1fr));background:#edf5ef}.lobby-session-group.k3 .lobby-region{background:radial-gradient(ellipse at 50% 15%,#d9f7be,transparent 78%),linear-gradient(135deg,#b5e9d3,#9bddcf);border-color:#d9f6e4}.lobby-session-group.k3 .lobby-region-link>strong{color:#246c61;text-shadow:0 1px 1px #fff9}.lobby-session-group.k3 .lobby-region-period{color:#407764}.lobby-session-group.k3 .lobby-region-favorite{color:#518e7b}.lobby-session-group.k3 .lobby-region-favorite[aria-pressed=true]{color:#c94888}.lobby-game-tile.k3.expanded{box-shadow:inset 0 0 0 2px #279b85}
 
 .compact-lobby{background:#fff;color:#4c4861;overflow:hidden;border-radius:15px;box-shadow:0 4px 25px #53508a0a}

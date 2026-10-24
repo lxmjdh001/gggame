@@ -7,7 +7,7 @@ import type { State } from '../api/games'
 import { roundStatusLabels, type RoundPhase } from '../lib/roundStatus'
 const props = defineProps<{ state: State; phase: RoundPhase; now: number; busy: boolean; historyOpen: boolean }>()
 const emit = defineEmits<{ history: [] }>()
-const issue = computed(() => props.state.next_draw_at.slice(0,16).replaceAll('-','').replace('T','').replace(':',''))
+const issue = computed(() => props.state.next_draw_at.slice(0,16).replace(/-/g,'').replace('T','').replace(':',''))
 const unavailable = computed(() => props.phase === 'syncing' || props.phase === 'paused')
 function countdown(target: number) {
  if (unavailable.value || !Number.isFinite(target) || !Number.isFinite(props.now)) return '--:--:--'

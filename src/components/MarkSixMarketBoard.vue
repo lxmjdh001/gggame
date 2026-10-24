@@ -4,9 +4,10 @@ import {computed,nextTick,onUnmounted,ref,watch} from 'vue'
 import {Check,ChevronRight,RefreshCw,X} from 'lucide-vue-next'
 import {money,user} from '../api/account'
 import {type Market,type MarketBook} from '../api/markets'
-import {canonicalValues,combinationCount,concreteMarket,expandCombinations,markSixGroups,quoteID,usesZodiac} from '../lib/marksix'
+import {canonicalValues,combinationCount,concreteMarket,expandCombinations,markSixBettingGroups,markSixBettingGroup,quoteID,usesZodiac} from '../lib/marksix'
 import {parseStake} from '../lib/stake'
 import {marketOddsText,validTierOdds} from '../lib/marketOdds'
+import {selectionOdds,conditionalOddsHint} from '../lib/marksixOdds'
 import StakeAmount from './StakeAmount.vue'
 import MarkSixBall from './MarkSixBall.vue'
 
@@ -19,27 +20,33 @@ const context=computed(()=>props.book.marksix_context)
 const contextReady=computed(()=>context.value?.issue===props.targetIssue)
 const quotes=computed(()=>Object.fromEntries(props.book.quotes.map(quote=>[quote.market_id,quote])))
 const selectedIDs=computed(()=>new Set(props.selections.map(selection=>selection.market.id)))
-const uiGroup=(market:Market)=>market.ui_group==='position_number'?'position_numbers':market.ui_group
-const menus=computed(()=>markSixGroups.filter(group=>group.id!=='sum'&&props.book.markets.some(market=>uiGroup(market)===group.id)))
+const uiGroup=markSixBettingGroup
+const menus=computed(()=>markSixBettingGroups.filter(group=>props.book.markets.some(market=>uiGroup(market)===group.id)))
 type SubmenuItem={id:string;label:string;type:'position'|'template'}
 const expandedCategory=ref('')
 const menuSections=computed(()=>menus.value.map(menu=>{
  const markets=props.book.markets.filter(market=>uiGroup(market)===menu.id)
- const children:SubmenuItem[]=['position_numbers','position_faces'].includes(menu.id)
-  ? [...new Set(markets.map(market=>`正码${market.positions[0]}`))].map(label=>({id:label,label,type:'position'}))
+ const children:SubmenuItem[]=menu.id==='position_numbers'
+  ? [...new Set(markets.map(market=>`正码${market.positions[0]}`))].map(label=>({id:label,label:label.replace('正码','正特码'),type:'position'}))
   : markets.filter(market=>market.selection_schema).map(market=>({id:market.id,label:market.label,type:'template'}))
  return {...menu,children}
 }))
-const categoryMarkets=computed(()=>props.book.markets.filter(market=>uiGroup(market)===active.value||active.value==='special'&&uiGroup(market)==='sum'))
+const categoryMarkets=computed(()=>props.book.markets.filter(market=>uiGroup(market)===active.value))
 const templates=computed(()=>categoryMarkets.value.filter(market=>market.selection_schema))
 const template=computed(()=>templates.value.find(market=>market.id===templateID.value)??templates.value[0])
 const schema=computed(()=>template.value?.selection_schema)
-const positions=computed(()=>['position_numbers','position_faces'].includes(active.value)?[...new Set(categoryMarkets.value.map(market=>`正码${market.positions[0]}`))]:[])
+const positions=computed(()=>active.value==='position_numbers'?[...new Set(categoryMarkets.value.map(market=>`正码${market.positions[0]}`))]:[])
 const fixedGroups=computed(()=>{
  const markets=categoryMarkets.value.filter(market=>!market.selection_schema&&(!positions.value.length||`正码${market.positions[0]}`===(position.value||positions.value[0])))
  const names=[...new Set(markets.map(market=>market.group))]
  if(active.value==='zodiac_tail')names.sort((a,b)=>['一肖','正特尾数','正肖'].indexOf(a)-['一肖','正特尾数','正肖'].indexOf(b))
- return names.map(group=>({name:group,rows:[markets.filter(market=>market.group===group&&!isNumber(market)),markets.filter(market=>market.group===group&&isNumber(market))].filter(rows=>rows.length)}))
+ const groups=names.map(group=>{
+  const numbers=markets.filter(market=>market.group===group&&isNumber(market))
+  const others=markets.filter(market=>market.group===group&&!isNumber(market))
+  return {name:active.value==='position_numbers'?group.replace(/^正码/,'正特码'):group,rows:(active.value==='special'?[numbers,others]:[others,numbers]).filter(rows=>rows.length)}
+ })
+ if(['special','position_numbers','regular'].includes(active.value))groups.sort((a,b)=>Number(b.rows.some(rows=>rows.every(isNumber)))-Number(a.rows.some(rows=>rows.every(isNumber))))
+ return groups
 })
 const poolOptions=computed(()=>{
  if(schema.value?.type==='zodiac')return context.value?.zodiacs.filter(item=>item.value>=schema.value!.min_value&&item.value<=schema.value!.max_value)??[]
@@ -82,7 +89,7 @@ function clearDraft(){pool.value=[];pairLeft.value=[];pairRight.value=[];pairMod
 function setCategory(id:string){if(!props.locked){expandedCategory.value=active.value===id&&expandedCategory.value===id?'':id;active.value=id;chipsOpen.value=false}}
 function isChildActive(item:SubmenuItem){return item.type==='position'?(position.value||positions.value[0])===item.id:template.value?.id===item.id}
 function selectChild(item:SubmenuItem){if(props.locked)return;if(item.type==='position')position.value=item.id;else templateID.value=item.id;if(content.value)content.value.scrollTop=0}
-const displayOdds=(market:Market)=>{const quote=quotes.value[quoteID(market)];return quote?.enabled?marketOddsText(market,quote.odds_milli,quote.tier_odds_milli,true):'暂停'}
+const displayOdds=(market:Market)=>{const quote=quotes.value[quoteID(market)];return quote?.enabled?marketOddsText(market,selectionOdds(market,quote,context.value),quote.tier_odds_milli,true):'暂停'}
 function isNumber(market:Market){return /^\d{1,2}$/.test(market.label)&&!usesZodiac(market)&&!market.kind.includes('tail')}
 function numberColor(number:number){return context.value?.numbers.find(item=>item.number===number)?.color??'green'}
 function displayNumbers(market:Market){
@@ -127,6 +134,7 @@ onUnmounted(restoreOverflow)
     <template v-if="templates.length">
      <template v-if="template&&schema">
       <header class="marksix-combination-title"><h3>{{template.label}}</h3><span>赔率 {{displayOdds(template)}}</span></header>
+      <p v-if="conditionalOddsHint(template,quotes[template.id])" class="marksix-play-rule">普通组合 {{displayOdds(template)}}倍；{{conditionalOddsHint(template,quotes[template.id])}}。复式按每一组实际组合分别取价，投注单显示锁定赔率。</p>
       <p class="marksix-play-rule">{{template.rule}}</p>
       <div v-if="pairAllowed" class="marksix-pair-modes" aria-label="连码选码方式"><button :disabled="locked" :class="{active:pairMode==='numbers'}" @click="setPairMode('numbers')">号码复式</button><button :disabled="locked||!contextReady" :class="{active:pairMode==='zodiac'}" @click="setPairMode('zodiac')">生肖对碰</button><button :disabled="locked" :class="{active:pairMode==='tail'}" @click="setPairMode('tail')">尾数对碰</button></div>
       <div v-if="pairAllowed&&pairMode!=='numbers'" class="marksix-pair-picker"><section v-for="side in (['left','right'] as const)" :key="side"><h4>{{side==='left'?'第一组':'第二组'}}</h4><div><button v-for="option in pairOptions" :key="option.value" :disabled="locked||!draftAvailable" :class="{selected:(side==='left'?pairLeft:pairRight).includes(option.value)}" :aria-pressed="(side==='left'?pairLeft:pairRight).includes(option.value)" @click="togglePair(side,option.value)">{{option.label}}</button></div></section><p>两组号码交叉配对，相同号码不成对，相同组合只计一注。</p></div>

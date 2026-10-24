@@ -261,7 +261,9 @@
           "balance_cents",
           "frozen_cents",
           "created_at",
-          "security_question_set"
+          "security_question_set",
+          "secondary_password_set",
+          "secondary_password_enabled"
         ],
         "properties": {
           "id": {
@@ -325,9 +327,28 @@
           "security_question_set": {
             "type": "boolean",
             "description": "历史账户是否保存过安全问题；登录不再使用二次验证。"
+          },
+          "secondary_password_set": {
+            "type": "boolean",
+            "description": "是否已设置独立的游戏二级密码；旧账户默认false。"
+          },
+          "secondary_password_enabled": {
+            "type": "boolean",
+            "description": "是否开启进入游戏的二级验证。"
           }
         },
         "description": "公开账户资料，不包含登录密码、提现密码、密码哈希或盐。"
+      },
+      "SecondaryPasswordStatus": {
+        "type": "object",
+        "required": ["is_set", "enabled", "verification_required", "server_time"],
+        "properties": {
+          "is_set": {"type": "boolean"},
+          "enabled": {"type": "boolean"},
+          "verification_required": {"type": "boolean"},
+          "server_time": {"type": "string", "format": "date-time"},
+          "verified_until": {"type": "string", "format": "date-time", "description": "仅当前会话有效验证返回；取验证后1小时、北京时间次日00:00、会话到期中的最早值。轮询不续期。"}
+        }
       },
       "CaptchaChallenge": {
         "type": "object",
@@ -371,11 +392,11 @@
           },
           "password": {
             "type": "string",
-            "minLength": 10,
-            "maxLength": 128,
+            "minLength": 8,
+            "maxLength": 16,
             "writeOnly": true,
-            "description": "登录密码，UTF-8字节长度10–128，必须同时包含大写及小写英文字母。",
-            "pattern": "^(?=.*[A-Z])(?=.*[a-z]).{10,128}$"
+            "description": "登录密码，UTF-8字节长度8–16，必须同时包含大写及小写英文字母。",
+            "pattern": "^(?=.*[A-Z])(?=.*[a-z]).{8,16}$"
           },
           "invite_code": {
             "type": "string",
@@ -651,8 +672,8 @@
           },
           "transaction_id": {
             "type": "string",
-            "pattern": "^(0x)?[0-9a-fA-F]{64}$",
-            "description": "完整交易哈希：TRC20 必须为 64 位十六进制且不带 0x；ERC20 必须为 0x 加 64 位十六进制。不可仅填末尾 5 位。"
+            "pattern": "^([0-9a-fA-F]{5}|(0x)?[0-9a-fA-F]{64})$",
+            "description": "填写交易哈希后5位即可，规范化为小写。后缀不是唯一凭证，不按后缀全局去重，必须人工核对实际到账。旧客户端完整哈希仍兼容原网络格式及唯一性检查。"
           },
           "settings_version": {
             "type": "integer",
@@ -762,7 +783,7 @@
           },
           "transaction_id": {
             "type": "string",
-            "description": "存款交易ID快照：人工存款保留去首尾空白后的客户输入；USDT为完整交易哈希，十六进制字母规范化为小写，ERC20保留0x前缀。"
+            "description": "存款交易ID快照：人工存款保留去首尾空白后的客户输入；USDT新申请可为5位哈希后缀，历史完整哈希仍保留，十六进制字母规范化为小写。"
           },
           "settings_version": {
             "type": "integer",
@@ -1089,6 +1110,20 @@
           },
           "enabled": {
             "type": "boolean"
+          },
+          "current_zodiac_odds_milli": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1000,
+            "maximum": 1000000,
+            "description": "可选。固定生肖等于本年生肖，或组选包含本年生肖时采用。农历年由开奖期确定，未设置沿用普通赔率。只适用于v6生肖玩法。"
+          },
+          "zero_tail_odds_milli": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1000,
+            "maximum": 1000000,
+            "description": "可选。尾数连的实际组合包含0尾时采用，未设置沿用普通赔率。"
           },
           "tier_odds_milli": {
             "type": "object",
@@ -1697,6 +1732,103 @@
     }
   },
   "paths": {
+    "/api/v1/auth/secondary-password/status": {
+      "get": {
+        "summary": "读取当前登录会话的二级密码与游戏授权状态",
+        "security": [{"SessionCookie": []}],
+        "responses": {
+          "200": {"description": "不缓存；仅本人会话状态，不包含密码、哈希或盐", "content": {"application/json": {"schema": {"type": "object", "properties": {"data": {"$ref": "#/components/schemas/SecondaryPasswordStatus"}}}}}},
+          "401": {"description": "未登录或会话过期"}
+        }
+      }
+    },
+    "/api/v1/auth/secondary-password": {
+      "post": {
+        "summary": "设置或修改独立二级密码",
+        "description": "首次设置需确认登录密码，成功后自动开启但不授予游戏验证；修改已有密码需当前二级密码，保留原开关状态。使所有旧游戏授权失效，不改变登录或提现密码、资金。",
+        "security": [{"SessionCookie": []}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {
+          "type": "object", "additionalProperties": false, "required": ["new_password", "confirm_password"],
+          "properties": {
+            "login_password": {"type": "string", "format": "password", "maxLength": 128, "description": "首次设置必填；保留既有登录密码长度兼容"},
+            "current_password": {"type": "string", "format": "password", "minLength": 6, "maxLength": 12, "description": "已有二级密码时必填"},
+            "new_password": {"type": "string", "format": "password", "minLength": 6, "maxLength": 12, "description": "按Unicode字符数计，无大小写组合要求，密码比较区分大小写"},
+            "confirm_password": {"type": "string", "format": "password", "minLength": 6, "maxLength": 12}
+          }
+        }}}},
+        "responses": {
+          "200": {"description": "返回data: SecondaryPasswordStatus"},
+          "400": {"description": "密码错误、长度或确认不符、设置已并发变更"},
+          "401": {"description": "未登录"},
+          "403": {"description": "跨源或账户停用"},
+          "429": {"description": "SECONDARY_PASSWORD_RATE_LIMITED；每账户15分钟最多5次，验证及设置共享"}
+        }
+      }
+    },
+    "/api/v1/auth/secondary-password/toggle": {
+      "post": {
+        "summary": "验证当前二级密码并开启或关闭游戏二级验证",
+        "security": [{"SessionCookie": []}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {
+          "type": "object", "additionalProperties": false, "required": ["password", "enabled"],
+          "properties": {"password": {"type": "string", "format": "password", "minLength": 6, "maxLength": 12}, "enabled": {"type": "boolean"}}
+        }}}},
+        "responses": {
+          "200": {"description": "返回data: SecondaryPasswordStatus；保留二级密码，所有旧游戏验证失效"},
+          "400": {"description": "未设置、密码错误或缺少enabled"},
+          "401": {"description": "未登录"},
+          "429": {"description": "SECONDARY_PASSWORD_RATE_LIMITED"}
+        }
+      }
+    },
+    "/api/v1/auth/secondary-password/verify": {
+      "post": {
+        "summary": "验证二级密码并授权当前登录会话进入游戏",
+        "description": "不得从其他登录继承授权；登出后失效。三种下单路径在同一写事务内强制检查，未验证返回403 SECONDARY_PASSWORD_REQUIRED，不自动退出登录。",
+        "security": [{"SessionCookie": []}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {
+          "type": "object", "additionalProperties": false, "required": ["password"],
+          "properties": {"password": {"type": "string", "format": "password", "minLength": 6, "maxLength": 12}}
+        }}}},
+        "responses": {
+          "200": {"description": "返回data: SecondaryPasswordStatus；关闭时不创建游戏验证"},
+          "400": {"description": "二级密码错误或配置并发变更"},
+          "401": {"description": "会话已失效"},
+          "429": {"description": "SECONDARY_PASSWORD_RATE_LIMITED"}
+        }
+      }
+    },
+    "/api/v1/admin/users/{id}/balance": {
+      "post": {
+        "summary": "管理员按充值或奖励分类调整余额",
+        "description": "正数增加、负数扣减，不可扣为负余额。kind=deposit/reward分别保存为admin_deposit/admin_reward流水，并保留操作原因和审计；分类、金额或原因不同不能复用同一幂等key。旧客户端省略kind沿用admin_adjust。分类沿用后台调账既有打码规则，不改变充值申请审核流程。",
+        "security": [{"SessionCookie": []}],
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["amount_cents", "note", "key"],
+                "properties": {
+                  "kind": {"type": "string", "enum": ["deposit", "reward"], "description": "充值/奖励；旧客户端可省略"},
+                  "amount_cents": {"type": "integer", "format": "int64", "minimum": -100000000, "maximum": 100000000, "not": {"enum": [0]}},
+                  "note": {"type": "string", "minLength": 2, "maxLength": 500},
+                  "key": {"type": "string", "minLength": 16, "maxLength": 100}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "调整成功或同一请求幂等重试成功"},
+          "400": {"description": "分类、金额、原因无效，余额不足或幂等请求冲突"},
+          "401": {"description": "未登录"},
+          "403": {"description": "非管理员或跨域请求"}
+        }
+      }
+    },
     "/api/v1/games": {
       "get": {
         "summary": "全部游戏场次",
@@ -2265,7 +2397,7 @@
     "/api/v1/auth/register": {
       "post": {
         "summary": "注册并建立登录会话",
-        "description": "注册必须填写字母数字用户名、同时包含大小写字母的10–128字节登录密码、手机号、姓名、微信号、有效邀请码、6位数字提现密码及一次性验证码。不再收集安全问题或答案；注册成功直接登录。每次注册尝试消费验证码，失败不写账户、余额或会话。同源JSON，每IP/路径每分钟最多15次。",
+        "description": "注册必须填写字母数字用户名、同时包含大小写字母的8–16字节登录密码、手机号、姓名、微信号、有效邀请码、6位数字提现密码及一次性验证码。不再收集安全问题或答案；注册成功直接登录。每次注册尝试消费验证码，失败不写账户、余额或会话。同源JSON，每IP/路径每分钟最多15次。",
         "security": [],
         "requestBody": {
           "required": true,
@@ -3022,6 +3154,21 @@
         }
       }
     },
+    "/api/v1/admin/marksix-odds-profile/{session}": {
+      "get": {
+        "summary": "管理员预览指定六合彩倍率方案（不保存）",
+        "description": "返回profile_id、完整quotes、configured和preserved数量。覆盖用户指定项目的价格，保留未指定项目、接单开关和旧订单。确认后通过PUT /admin/markets/{session}保存。",
+        "security": [{"SessionCookie": []}],
+        "parameters": [{"name":"session","in":"path","required":true,"schema":{"type":"string"}}],
+        "responses": {
+          "200": {"description":"方案预览，未写入数据库"},
+          "400": {"description":"不是六合彩场次或报价不完整"},
+          "401": {"description":"未登录"},
+          "403": {"description":"非管理员"},
+          "404": {"description":"场次不存在"}
+        }
+      }
+    },
     "/api/v1/admin/markets/{session}": {
       "put": {
         "summary": "管理员保存场次完整赔率表",
@@ -3583,7 +3730,7 @@
     },
     "/api/v1/admin/users/{id}/password": {
       "get": {
-        "summary": "管理员修改会员登录密码：10–128位且含大小写，两次一致；基于读取的revision比较更新，成功后撤销全部会话并审计，不修改提现密码。",
+        "summary": "管理员修改会员登录密码：8–16位且含大小写，两次一致；基于读取的revision比较更新，成功后撤销全部会话并审计，不修改提现密码。",
         "parameters": [
           {
             "name": "id",
@@ -3613,7 +3760,7 @@
         }
       },
       "post": {
-        "summary": "管理员修改会员登录密码：10–128位且含大小写，两次一致；基于读取的revision比较更新，成功后撤销全部会话并审计，不修改提现密码。",
+        "summary": "管理员修改会员登录密码：8–16位且含大小写，两次一致；基于读取的revision比较更新，成功后撤销全部会话并审计，不修改提现密码。",
         "parameters": [
           {
             "name": "id",
@@ -3665,10 +3812,10 @@
                   },
                   "new_password": {
                     "type": "string",
-                    "minLength": 10,
-                    "maxLength": 128,
+                    "minLength": 8,
+                    "maxLength": 16,
                     "writeOnly": true,
-                    "pattern": "^(?=.*[A-Z])(?=.*[a-z]).{10,128}$"
+                    "pattern": "^(?=.*[A-Z])(?=.*[a-z]).{8,16}$"
                   },
                   "password_confirmation": {
                     "type": "string",

@@ -6,6 +6,11 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vue-tsc --noEmit && vite build",
+    "test:compat": "node --test tests/requestTimeout.test.mjs",
+    "test:odds": "node --test tests/marksixOdds.test.mjs",
+    "test:marksix": "node --test tests/marksix*.test.mjs",
+    "test:password": "node --test tests/passwordPolicy.test.mjs",
+    "test:secondary": "node --test tests/secondaryPassword.test.mjs",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {

@@ -158,7 +158,7 @@ func (s *Store) RegisterSecure(in SecureRegistrationInput) (User, string, error)
 		return User{}, "", errors.New("用户名须为4–32位字母或数字，不支持下划线")
 	}
 	if !passwordValid(in.Password) || !uppercasePasswordPattern.MatchString(in.Password) || !lowercasePasswordPattern.MatchString(in.Password) {
-		return User{}, "", errors.New("登录密码须为10–128位，且同时包含大写和小写字母")
+		return User{}, "", errors.New("登录密码须为8–16位，且同时包含大写和小写字母")
 	}
 	if strings.TrimSpace(in.Name) == "" {
 		return User{}, "", errors.New("请填写姓名")

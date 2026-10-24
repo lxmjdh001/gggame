@@ -2,10 +2,21 @@ import type {Market,MarkSixContext} from '../api/markets'
 
 export const markSixGroups=[
  {id:'zodiac_tail',label:'一肖/尾数'}, {id:'special',label:'特码'}, {id:'regular',label:'正码'},
- {id:'position_numbers',label:'正特码'}, {id:'position_faces',label:'正码1-6'}, {id:'linked_numbers',label:'连码'},
+ {id:'position_numbers',label:'正特码'}, {id:'position_faces',label:'正特1-6'},
  {id:'half_wave',label:'特码半波'}, {id:'special_zodiac',label:'特码生肖'}, {id:'combined_zodiac',label:'合肖'},
  {id:'miss',label:'全不中'}, {id:'linked_tail',label:'尾数连'}, {id:'linked_zodiac',label:'连肖'}, {id:'sum',label:'总和'},
 ] as const
+// Betting presentation only. Keep server contracts/quotes intact for historical
+// orders and admin configuration; do not merge every `sum` market into 特码.
+export const markSixBettingGroups=markSixGroups.filter(group=>group.id!=='sum')
+const specialBettingKinds=new Set(['number','lhc_size','lhc_parity','lhc_digit_size','lhc_digit_parity','lhc_tail_size','lhc_color'])
+export function markSixBettingGroup(market:Market):string|null{
+ const group=market.ui_group==='position_number'?'position_numbers':market.ui_group
+ if(group==='special'&&!specialBettingKinds.has(market.kind))return null
+ if(group==='sum')return market.id.startsWith('lhc6.sum.')&&['lhc_size','lhc_parity'].includes(market.kind)?'regular':null
+ if(group==='linked_numbers')return null
+ return group??null
+}
 export const quoteID=(market:Market)=>market.quote_id??market.id
 export const canonicalValues=(values:number[])=>[...new Set(values)].sort((a,b)=>a-b)
 export const selectionID=(marketID:string,values:number[])=>`${marketID}[${canonicalValues(values).join(',')}]`

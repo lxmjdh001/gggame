@@ -65,7 +65,7 @@ func TestPreparedDrawOnlyVisibleToAdmin(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer accountDB.Close()
-	const password = "preview-test-password-123"
+	const password = "Preview-pass-123"
 	if _, err = accountDB.Bootstrap("admin", password); err != nil {
 		t.Fatal(err)
 	}

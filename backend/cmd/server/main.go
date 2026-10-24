@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"encoding/hex"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -30,6 +30,15 @@ func env(key, fallback string) string {
 	}
 	return fallback
 }
+func initialAdminPassword() (string, error) {
+	// Twelve random bytes encode to exactly sixteen URL-safe characters.
+	// Existing administrators and their credentials are never reset here.
+	b := make([]byte, 12)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
 func run() error {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	listener, err := net.Listen("tcp", env("BACKEND_ADDR", "127.0.0.1:8082"))
@@ -51,11 +60,10 @@ func run() error {
 	password := os.Getenv("ADMIN_PASSWORD")
 	generated := password == ""
 	if generated {
-		b := make([]byte, 20)
-		if _, err = rand.Read(b); err != nil {
+		password, err = initialAdminPassword()
+		if err != nil {
 			return err
 		}
-		password = hex.EncodeToString(b)
 	}
 	adminName := env("ADMIN_USERNAME", "admin")
 	created, err := accountDB.Bootstrap(adminName, password)

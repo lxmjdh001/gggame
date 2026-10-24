@@ -531,7 +531,7 @@ func TestAuthSecurityHTTPBoundariesAndCaptchaRateLimit(t *testing.T) {
 		}
 	}
 	before := registrationCounts(t, s)
-	missing := call("POST", "/api/v1/auth/register", "", `{"username":"no_captcha_user","password":"Test-password-12345","phone":"13800138000","wechat":"test_wechat","withdrawal_password":"246810"}`)
+	missing := call("POST", "/api/v1/auth/register", "", `{"username":"no_captcha_user","password":"Test-pass-12345","phone":"13800138000","wechat":"test_wechat","withdrawal_password":"246810"}`)
 	if missing.Code != http.StatusBadRequest || len(missing.Result().Cookies()) != 0 || !strings.Contains(missing.Body.String(), "验证码") {
 		t.Fatal("HTTP registration bypassed required captcha", missing.Code, missing.Body.String())
 	}

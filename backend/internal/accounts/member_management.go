@@ -74,7 +74,7 @@ func (s *Store) ResetMemberPassword(actor, id string, in MemberPasswordInput) er
 		return err
 	}
 	if !passwordValid(in.Password) || !uppercasePasswordPattern.MatchString(in.Password) || !lowercasePasswordPattern.MatchString(in.Password) {
-		return errors.New("新登录密码需10–128位，且同时包含大写和小写字母")
+		return errors.New("新登录密码需8–16位，且同时包含大写和小写字母")
 	}
 	if in.Password != in.Confirmation {
 		return errors.New("两次输入的新密码不一致")

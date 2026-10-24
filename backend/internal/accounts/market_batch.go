@@ -17,6 +17,7 @@ type MarketSelection struct {
 	TierOddsMilli map[string]int64 `json:"tier_odds_milli,omitempty"`
 }
 type MarketBatchInput struct {
+	gameToken        string
 	SessionID        string            `json:"session_id"`
 	Issue            string            `json:"issue"`
 	UnitCents        int64             `json:"unit_cents"`
@@ -39,6 +40,9 @@ func (s *Store) PlaceMarketBatch(id string, in MarketBatchInput, now time.Time) 
 			now = time.Now()
 		}
 		if _, err := active(tx, id); err != nil {
+			return err
+		}
+		if err := requireGameAccess(tx, id, in.gameToken, now); err != nil {
 			return err
 		}
 		prior, err := idem(tx, "market_batch:"+id, in.Key, in)
@@ -90,6 +94,7 @@ func (s *Store) PlaceMarketBatch(id string, in MarketBatchInput, now time.Time) 
 				amount = in.AmountCents
 			}
 			item := MarketOrderInput{SessionID: in.SessionID, Issue: in.Issue, MarketID: selection.MarketID, OddsMilli: selection.OddsMilli, UnitCents: in.UnitCents, AmountCents: &amount, Key: tokenKey(fmt.Sprintf("%s:%d", in.Key, i)), Values: selection.Values, TierOddsMilli: selection.TierOddsMilli}
+			item.gameToken = in.gameToken
 			o, err := placeMarketOrder(tx, id, item, now, "market_batch_item:")
 			if err != nil {
 				return fmt.Errorf("第%d注：%w；本次投注未提交", i+1, err)

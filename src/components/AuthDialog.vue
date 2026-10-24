@@ -2,6 +2,7 @@
 import {ref,computed,onMounted,onUnmounted,nextTick,watch} from 'vue'
 import {ChevronLeft,ShieldCheck,ArrowRight,RefreshCw} from 'lucide-vue-next'
 import {api,user,refreshAccount,site,type User} from '../api/account'
+import {validNewPasswordLength} from '../lib/passwordPolicy'
 const emit=defineEmits<{close:[];success:[]}>()
 const register=ref(!!new URLSearchParams(location.search).get('invite')),username=ref(''),password=ref(''),confirm=ref(''),phone=ref(''),name=ref(''),invite=ref(new URLSearchParams(location.search).get('invite')??''),error=ref(''),busy=ref(false),dialog=ref<HTMLElement|null>(null)
 interface CaptchaChallenge {id:string;image_data_url:string;expires_at:string}
@@ -56,7 +57,7 @@ async function submit(){
  error.value=''
  if(register.value){
   if(!/^[A-Za-z0-9]{4,32}$/.test(username.value)){error.value='用户名须为4–32位字母或数字，不支持下划线';return}
-  if(password.value.length<10||password.value.length>128||!/[A-Z]/.test(password.value)||!/[a-z]/.test(password.value)){error.value='登录密码须为10–128位，且同时包含大写和小写字母';return}
+  if(!validNewPasswordLength(password.value)||!/[A-Z]/.test(password.value)||!/[a-z]/.test(password.value)){error.value='登录密码须为8–16位，且同时包含大写和小写字母';return}
   if(!name.value.trim()){error.value='请填写姓名';return}
   if(!wechat.value.trim()){error.value='请填写微信号';return}
   if(!phone.value.trim()){error.value='请填写手机号';return}
@@ -101,10 +102,10 @@ async function submit(){
      <fieldset :disabled="busy">
       <legend class="auth-sr-only">{{register?'注册金沙账户':'登录金沙账户'}}</legend>
       <label class="auth-field"><span class="auth-label">用户名 <b aria-hidden="true">*</b></span><input v-model="username" aria-label="用户名" required :pattern="register?'[A-Za-z0-9]{4,32}':'[A-Za-z0-9_]{4,32}'" minlength="4" maxlength="32" autocomplete="username" autocapitalize="none" :spellcheck="false" :placeholder="register?'4–32位字母或数字':'请输入用户名'" :title="register?'用户名仅支持4–32位字母或数字，不支持下划线':undefined"/></label>
-      <label class="auth-field"><span class="auth-label">密码 <b aria-hidden="true">*</b></span><input v-model="password" aria-label="密码" type="password" required minlength="10" maxlength="128" :autocomplete="register?'new-password':'current-password'" :pattern="register?'(?=.*[A-Z])(?=.*[a-z]).{10,128}':undefined" :aria-describedby="register?'auth-password-hint':undefined" :title="register?'10–128位，必须同时包含大写和小写字母':undefined" :placeholder="register?'10–128位，须含大写和小写字母':'请输入密码'"/></label>
+      <label class="auth-field"><span class="auth-label">密码 <b aria-hidden="true">*</b></span><input v-model="password" aria-label="密码" type="password" required :minlength="register?8:undefined" :maxlength="register?16:128" :autocomplete="register?'new-password':'current-password'" :pattern="register?'(?=.*[A-Z])(?=.*[a-z]).{8,16}':undefined" :aria-describedby="register?'auth-password-hint':undefined" :title="register?'8–16位，必须同时包含大写和小写字母':undefined" :placeholder="register?'8–16位，须含大写和小写字母':'请输入密码'"/></label>
       <template v-if="register">
-       <p id="auth-password-hint" class="auth-hint auth-password-hint">登录密码须为10–128位，必须同时包含大写和小写字母。</p>
-       <label class="auth-field"><span class="auth-label">确认密码 <b aria-hidden="true">*</b></span><input v-model="confirm" aria-label="确认密码" type="password" required minlength="10" maxlength="128" autocomplete="new-password" placeholder="再次输入密码"/></label>
+       <p id="auth-password-hint" class="auth-hint auth-password-hint">登录密码须为8–16位，必须同时包含大写和小写字母。</p>
+       <label class="auth-field"><span class="auth-label">确认密码 <b aria-hidden="true">*</b></span><input v-model="confirm" aria-label="确认密码" type="password" required minlength="8" maxlength="16" autocomplete="new-password" placeholder="再次输入密码"/></label>
        <div class="auth-field"><label class="auth-label" for="auth-captcha">验证码 <b aria-hidden="true">*</b></label><div class="auth-captcha-entry"><input id="auth-captcha" v-model="captchaAnswer" aria-label="验证码" required pattern="[A-Za-z0-9]{5}" minlength="5" maxlength="5" autocomplete="off" autocapitalize="characters" :spellcheck="false" aria-describedby="auth-captcha-hint" placeholder="5位图形码"/><button type="button" class="auth-captcha-image" :disabled="captchaLoading||busy" aria-label="刷新图形验证码" @click="loadCaptcha"><img v-if="captcha" :src="captcha.image_data_url" alt="图形验证码"/><span v-else>{{captchaLoading?'加载中…':'点击重试'}}</span><RefreshCw :size="12"/></button></div><p id="auth-captcha-hint" class="auth-field-hint">不区分大小写，5分钟有效。点击图片换一张。</p><p v-if="captchaError" class="auth-captcha-error" role="alert">{{captchaError}}</p></div>
        <label class="auth-field"><span class="auth-label">姓名 <b aria-hidden="true">*</b></span><input v-model="name" aria-label="姓名" required autocomplete="name" maxlength="40" placeholder="请输入姓名"/></label>
        <label class="auth-field"><span class="auth-label">手机号 <b aria-hidden="true">*</b></span><input v-model="phone" aria-label="手机号" type="tel" required autocomplete="tel" inputmode="tel" maxlength="16" placeholder="11位手机号，或+国家区号号码"/></label>

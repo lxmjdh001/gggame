@@ -210,10 +210,13 @@ func wagering(tx *bolt.Tx, id string, cutoff *wagerCutoff) (Wagering, error) {
 		if l.UserID != id || l.Amount <= 0 {
 			return nil
 		}
-		switch l.Kind {
-		case "deposit_approved":
+		// Use the same exact legacy-note classification as the member ledger.
+		// This includes old admin_adjust entries explicitly labelled 充值/奖励,
+		// without rewriting history or treating arbitrary adjustments as deposits.
+		switch ledgerForDisplay(l).Kind {
+		case "deposit_approved", "admin_deposit":
 			out.Deposit += l.Amount
-		case "registration_bonus", "promotion_bonus", "deposit_bonus", "reward":
+		case "registration_bonus", "promotion_bonus", "deposit_bonus", "reward", "admin_reward":
 			out.Reward += l.Amount
 		}
 		return nil

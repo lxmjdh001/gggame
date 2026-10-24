@@ -67,7 +67,7 @@ func TestMemberPasswordResetAuthorizationValidationAndRevocation(t *testing.T) {
 	financial := managementFinancialSnapshot(t, s)
 	state, e := s.MemberPasswordState(adminUser.ID, u.ID)
 	must(t, e)
-	valid := MemberPasswordInput{Revision: state.Revision, Password: "New-password-12345", Confirmation: "New-password-12345", Note: "客户申请重设登录密码"}
+	valid := MemberPasswordInput{Revision: state.Revision, Password: "New-pass-12345", Confirmation: "New-pass-12345", Note: "客户申请重设登录密码"}
 	if _, e = s.MemberPasswordState(u.ID, other.ID); !errors.Is(e, ErrForbidden) {
 		t.Fatal("member preview allowed", e)
 	}
@@ -158,7 +158,7 @@ func TestMemberPasswordResetConcurrentAndDisabled(t *testing.T) {
 	u := register(t, s, "reset_race", "")
 	state, e := s.MemberPasswordState(a.ID, u.ID)
 	must(t, e)
-	in := MemberPasswordInput{state.Revision, "New-password-12345", "New-password-12345", "并发操作测试"}
+	in := MemberPasswordInput{state.Revision, "New-pass-12345", "New-pass-12345", "并发操作测试"}
 	var successes atomic.Int32
 	var wg sync.WaitGroup
 	for i := 0; i < 2; i++ {
@@ -178,7 +178,7 @@ func TestMemberPasswordResetConcurrentAndDisabled(t *testing.T) {
 	state, e = s.MemberPasswordState(a.ID, u.ID)
 	must(t, e)
 	in.Revision = state.Revision
-	in.Password = "Another-password-12345"
+	in.Password = "Other-pass-12345"
 	in.Confirmation = in.Password
 	must(t, s.ResetMemberPassword(a.ID, u.ID, in))
 	if managementStored(t, s, u.ID).Status != "disabled" {
@@ -361,7 +361,7 @@ func TestMemberManagementHTTPAuthorizationAndPrivacy(t *testing.T) {
 	}
 	state, e := s.MemberPasswordState(a.ID, root.ID)
 	must(t, e)
-	body, _ := json.Marshal(MemberPasswordInput{state.Revision, "HTTP-password-12345", "HTTP-password-12345", "会员请求修改"})
+	body, _ := json.Marshal(MemberPasswordInput{state.Revision, "HTTP-pass-12345", "HTTP-pass-12345", "会员请求修改"})
 	if w := call("POST", "/api/v1/admin/users/"+root.ID+"/password", string(body), adminToken); w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}

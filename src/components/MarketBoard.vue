@@ -8,6 +8,7 @@ import DiceMarketBoard from './DiceMarketBoard.vue'
 import MarkSixMarketBoard from './MarkSixMarketBoard.vue'
 import {parseStake} from '../lib/stake'
 import {quoteID,usesZodiac} from '../lib/marksix'
+import {selectionOdds} from '../lib/marksixOdds'
 import {copyTierOdds,sameTierOdds,validTierOdds} from '../lib/marketOdds'
 import {oddsText,type Market,type MarketBook,type MarketBatchInput} from '../api/markets'
 const props=defineProps<{sessionId:string;playSetting?:PlaySetting;targetIssue:string;blocked:boolean;blockLabel?:string;compact?:boolean;racing?:boolean;dice?:boolean;initialAmount?:string}>()
@@ -34,7 +35,8 @@ const cost=computed(()=>parseStake(amount.value))
 const individualAmounts=computed(()=>!!props.racing&&racingMode.value==='general')
 const selectionCost=(id:string)=>individualAmounts.value?parseStake(selectionAmounts.value[id]??''):cost.value
 const total=computed(()=>chosen.value.reduce((sum,c)=>sum+selectionCost(c.market.id),0))
-const changed=computed(()=>chosen.value.some(c=>quotes.value[quoteID(c.market)]?.odds_milli!==c.odds||!sameTierOdds(quotes.value[quoteID(c.market)]?.tier_odds_milli,c.tierOdds)||props.playSetting?.unit_cents!==c.unit))
+const actualOdds=(m:Market)=>selectionOdds(m,quotes.value[quoteID(m)],book.value?.marksix_context)
+const changed=computed(()=>chosen.value.some(c=>actualOdds(c.market)!==c.odds||!sameTierOdds(quotes.value[quoteID(c.market)]?.tier_odds_milli,c.tierOdds)||props.playSetting?.unit_cents!==c.unit))
 const unavailable=computed(()=>chosen.value.some(c=>!quotes.value[quoteID(c.market)]?.enabled||!validTierOdds(c.market,quotes.value[quoteID(c.market)]?.tier_odds_milli)))
 const invalidCost=(value:number)=>value<(props.playSetting?.unit_cents??200)||value>(props.playSetting?.max_stake_cents??100000)
 const invalidAmount=computed(()=>individualAmounts.value?chosen.value.some(c=>invalidCost(selectionCost(c.market.id))):invalidCost(cost.value))
@@ -98,14 +100,14 @@ function select(m:Market){
   m={...m,selection_context_issue:props.targetIssue}
  }
  if(individualAmounts.value&&!parseStake(selectionAmounts.value[m.id]??''))selectionAmounts.value[m.id]=invalidCost(cost.value)?String((props.playSetting?.unit_cents??200)/100):amount.value
- chosen.value.push({market:m,odds:q.odds_milli,tierOdds:copyTierOdds(q.tier_odds_milli),unit:props.playSetting?.unit_cents??200});requestKey.value=key()
+ chosen.value.push({market:m,odds:actualOdds(m),tierOdds:copyTierOdds(q.tier_odds_milli),unit:props.playSetting?.unit_cents??200});requestKey.value=key()
 }
 function addMarkets(markets:Market[]){
  if(locked.value)return
  const unique=new Map(markets.filter(market=>!selectedIDs.value.has(market.id)).map(market=>[market.id,market]))
  if(chosen.value.length+unique.size>500){emit('notify','每次最多提交500注，请减少选择');return}
  if([...unique.values()].some(market=>!quotes.value[quoteID(market)]?.enabled||!validTierOdds(market,quotes.value[quoteID(market)]?.tier_odds_milli)||usesZodiac(market)&&book.value?.marksix_context?.issue!==props.targetIssue)){emit('notify','当前玩法或生肖资料不可用，请刷新后重选');return}
- for(const market of unique.values())chosen.value.push({market,odds:quotes.value[quoteID(market)]!.odds_milli,tierOdds:copyTierOdds(quotes.value[quoteID(market)]!.tier_odds_milli),unit:props.playSetting?.unit_cents??200})
+ for(const market of unique.values())chosen.value.push({market,odds:actualOdds(market),tierOdds:copyTierOdds(quotes.value[quoteID(market)]!.tier_odds_milli),unit:props.playSetting?.unit_cents??200})
  if(unique.size){requestKey.value=key();emit('notify',`已加入${unique.size}注，共${chosen.value.length}注`)}
 }
 function setRacingMode(next:'quick'|'general'){
@@ -123,7 +125,7 @@ function setSelectionAmount(m:Market,value:string){
 }
 function confirmQuotes(){
  if(locked.value)return
- chosen.value=chosen.value.map(c=>quotes.value[quoteID(c.market)]?.enabled?{...c,odds:quotes.value[quoteID(c.market)]!.odds_milli,tierOdds:copyTierOdds(quotes.value[quoteID(c.market)]!.tier_odds_milli),unit:props.playSetting?.unit_cents??200}:c)
+ chosen.value=chosen.value.map(c=>quotes.value[quoteID(c.market)]?.enabled?{...c,odds:actualOdds(c.market),tierOdds:copyTierOdds(quotes.value[quoteID(c.market)]!.tier_odds_milli),unit:props.playSetting?.unit_cents??200}:c)
  requestKey.value=key()
 }
 async function submit(){

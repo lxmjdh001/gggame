@@ -20,7 +20,7 @@ function result(o:Order){
 }
 const resultLabel=(o:Order)=>filters.find(f=>f.value===result(o))?.label??'处理中'
 function selection(o:Order){return o.market_name||o.numbers.map(n=>o.session_id.startsWith('pk10')||o.session_id.startsWith('lhc')?String(n).padStart(2,'0'):String(n)).join('、')}
-function gameName(o:Order){return o.session_name||displayGameName(o.game_name)}
+function gameName(o:Order){return displayGameName(o.game_name||o.session_name)}
 let version=0
 async function load(requestedPage=page.value){
  const id=user.value?.id

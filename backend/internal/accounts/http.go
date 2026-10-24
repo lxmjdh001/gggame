@@ -34,6 +34,14 @@ func response(w http.ResponseWriter, status int, v any) {
 }
 func result(w http.ResponseWriter, v any, err error) {
 	if err != nil {
+		if errors.Is(err, ErrSecondaryRequired) {
+			response(w, 403, map[string]any{"error": map[string]string{"code": "SECONDARY_PASSWORD_REQUIRED", "message": err.Error()}})
+			return
+		}
+		if errors.Is(err, errSecondaryLimited) {
+			response(w, 429, map[string]any{"error": map[string]string{"code": "SECONDARY_PASSWORD_RATE_LIMITED", "message": err.Error()}})
+			return
+		}
 		status := 400
 		if errors.Is(err, ErrUnauthorized) {
 			status = 401
@@ -264,6 +272,10 @@ func (h *HTTP) Bind(mux *http.ServeMux) {
 		v, e := h.Store.MarketBook(r.PathValue("session"))
 		result(w, v, e)
 	})
+	mux.HandleFunc("GET /api/v1/admin/marksix-odds-profile/{session}", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		v, e := h.Store.MarkSixOddsPreset(r.PathValue("session"))
+		result(w, v, e)
+	}))
 	mux.HandleFunc("PUT /api/v1/admin/markets/{session}", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
 		var in struct {
 			Quotes []Quote `json:"quotes"`
@@ -280,6 +292,7 @@ func (h *HTTP) Bind(mux *http.ServeMux) {
 			result(w, nil, e)
 			return
 		}
+		in.gameToken = cookieToken(r)
 		v, e := h.Store.PlaceMarketOrder(u.ID, in, time.Time{})
 		result(w, v, e)
 	}))
@@ -289,11 +302,52 @@ func (h *HTTP) Bind(mux *http.ServeMux) {
 			result(w, nil, err)
 			return
 		}
+		in.gameToken = cookieToken(r)
 		v, err := h.Store.PlaceMarketBatch(u.ID, in, time.Time{})
 		result(w, v, err)
 	}))
 
 	mux.HandleFunc("GET /api/v1/auth/me", auth(false, func(w http.ResponseWriter, r *http.Request, u User) { result(w, u, nil) }))
+	mux.HandleFunc("GET /api/v1/auth/secondary-password/status", auth(false, func(w http.ResponseWriter, r *http.Request, _ User) {
+		v, e := h.Store.SecondaryPasswordStatus(cookieToken(r))
+		result(w, v, e)
+	}))
+	mux.HandleFunc("POST /api/v1/auth/secondary-password", auth(false, func(w http.ResponseWriter, r *http.Request, _ User) {
+		var in SecondaryPasswordInput
+		if e := decode(w, r, &in); e != nil {
+			result(w, nil, e)
+			return
+		}
+		v, e := h.Store.SetSecondaryPassword(cookieToken(r), in)
+		result(w, v, e)
+	}))
+	mux.HandleFunc("POST /api/v1/auth/secondary-password/verify", auth(false, func(w http.ResponseWriter, r *http.Request, _ User) {
+		var in struct {
+			Password string `json:"password"`
+		}
+		if e := decode(w, r, &in); e != nil {
+			result(w, nil, e)
+			return
+		}
+		v, e := h.Store.VerifySecondaryPassword(cookieToken(r), in.Password)
+		result(w, v, e)
+	}))
+	mux.HandleFunc("POST /api/v1/auth/secondary-password/toggle", auth(false, func(w http.ResponseWriter, r *http.Request, _ User) {
+		var in struct {
+			Password string `json:"password"`
+			Enabled  *bool  `json:"enabled"`
+		}
+		if e := decode(w, r, &in); e != nil {
+			result(w, nil, e)
+			return
+		}
+		if in.Enabled == nil {
+			result(w, nil, errors.New("请选择开启或关闭"))
+			return
+		}
+		v, e := h.Store.ToggleSecondaryPassword(cookieToken(r), in.Password, *in.Enabled)
+		result(w, v, e)
+	}))
 	mux.HandleFunc("POST /api/v1/auth/password", auth(false, func(w http.ResponseWriter, r *http.Request, u User) {
 		if h.limited(r) {
 			result(w, nil, errors.New("操作过于频繁，请稍后再试"))
@@ -429,6 +483,7 @@ func (h *HTTP) Bind(mux *http.ServeMux) {
 			result(w, nil, e)
 			return
 		}
+		in.gameToken = cookieToken(r)
 		v, e := h.Store.PlaceOrder(u.ID, in, time.Time{})
 		result(w, v, e)
 	}))
@@ -495,13 +550,18 @@ func (h *HTTP) Bind(mux *http.ServeMux) {
 	}))
 	mux.HandleFunc("POST /api/v1/admin/users/{id}/balance", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
 		var in struct {
+			Kind   string `json:"kind"`
 			Amount int64  `json:"amount_cents"`
 			Note   string `json:"note"`
 			Key    string `json:"key"`
 		}
 		e := decode(w, r, &in)
 		if e == nil {
-			e = h.Store.Adjust(u.ID, r.PathValue("id"), in.Amount, in.Note, in.Key)
+			if in.Kind == "" {
+				e = h.Store.Adjust(u.ID, r.PathValue("id"), in.Amount, in.Note, in.Key)
+			} else {
+				e = h.Store.AdjustWithKind(u.ID, r.PathValue("id"), in.Amount, in.Note, in.Key, in.Kind)
+			}
 		}
 		result(w, true, e)
 	}))

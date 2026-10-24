@@ -4,16 +4,18 @@ import InviteFriends from './InviteFriends.vue'
 import AccountRecords from './AccountRecords.vue'
 import MyOrders from './MyOrders.vue'
 import WalletPanel from './WalletPanel.vue'
+import SecondaryPasswordSettings from './SecondaryPasswordSettings.vue'
 import {Wallet,Users,Gift,FileText,ShieldCheck,ArrowUpRight,LogOut,RefreshCw,LockKeyhole,ChevronRight,UserRound,Settings,ArrowDownToLine,ArrowUpFromLine,History,ChartNoAxesCombined} from 'lucide-vue-next'
 import {user,account,api,refreshAccount,money} from '../api/account'
+import {validNewPasswordLength} from '../lib/passwordPolicy'
 const props=defineProps<{page:string;walletMode:'deposit'|'withdraw'}>();const emit=defineEmits<{login:[];navigate:[page:string];notify:[message:string];logout:[];wallet:[mode:'deposit'|'withdraw'];busy:[busy:boolean]}>()
-const passwordOpen=ref(false)
+const passwordOpen=ref(false),secondaryOpen=ref(false)
 const busy=ref(false),error=ref(''),oldPassword=ref(''),newPassword=ref(''),confirmPassword=ref('')
 const title=computed(()=>({wallet:'我的钱包',commissions:'邀请好友',records:'投注记录',ledger:'账变记录',transactions:'交易记录',daily:'每日输赢',profile:'个人中心'}[props.page]??'个人中心'))
 async function refresh(){try{await refreshAccount();error.value=''}catch(e){error.value=(e as Error).message}}
 onMounted(()=>{if(props.page!=='wallet')void refresh()});watch(()=>props.page,()=>{error.value='';if(props.page!=='wallet')void refresh()})
 async function action(fn:()=>Promise<void>){if(busy.value)return;busy.value=true;error.value='';try{await fn()}catch(e){error.value=(e as Error).message}finally{busy.value=false}}
-async function changePassword(){await action(async()=>{if(newPassword.value!==confirmPassword.value)throw new Error('两次新密码不一致');await api('/auth/password','POST',{old_password:oldPassword.value,new_password:newPassword.value});user.value=null;account.value=null;emit('notify','密码已更新，请重新登录');emit('login')})}
+async function changePassword(){await action(async()=>{if(!validNewPasswordLength(newPassword.value))throw new Error('新密码需8–16位');if(newPassword.value!==confirmPassword.value)throw new Error('两次新密码不一致');await api('/auth/password','POST',{old_password:oldPassword.value,new_password:newPassword.value});user.value=null;account.value=null;emit('notify','密码已更新，请重新登录');emit('login')})}
 </script>
 <template><div class="account-page" :class="{'reference-profile':page==='profile','reference-wallet':page==='wallet','reference-invite':page==='commissions','reference-orders':page==='records'}"><WalletPanel v-if="page==='wallet'" :mode="walletMode" @back="emit('navigate','profile')" @login="emit('login')" @notify="emit('notify',$event)" @busy="emit('busy',$event)"/><MyOrders v-else-if="page==='records'" @back="emit('navigate','profile')" @login="emit('login')"/><template v-else><header v-if="page==='profile'" class="profile-header"><span>我的</span><button aria-label="修改登陆密码" :aria-expanded="passwordOpen" @click="passwordOpen=!passwordOpen"><Settings :size="21"/></button></header><div v-if="page!=='profile'" class="page-heading"><div><p v-if="page!=='commissions'" class="section-eyebrow">JS · MY ACCOUNT</p><h1>{{title}}</h1><p v-if="page!=='commissions'">账户、余额与记录，集中管理。</p></div><button v-if="user" class="secondary-button" @click="refresh"><RefreshCw :size="16"/>刷新</button></div>
  <div v-if="!user" class="account-empty"><div class="auth-brand"><LockKeyhole :size="30"/></div><h2>登录你的金沙账户</h2><p>登录后查看余额、订单和邀请好友。</p><button class="primary-button" @click="emit('login')">登录 / 注册 <ArrowUpRight :size="17"/></button></div>
@@ -21,8 +23,9 @@ async function changePassword(){await action(async()=>{if(newPassword.value!==co
  <template v-if="page==='profile'">
  <section class="profile-summary"><div class="profile-summary-top"><span class="profile-person"><UserRound :size="36"/></span><div><h2>{{user.username}}</h2><small><ShieldCheck :size="14"/>{{user.role==='admin'?'管理员':'会员'}} · 邀请码 {{user.invite_code}}</small></div><button @click="emit('logout')">退出</button></div><div class="profile-funds"><button @click="emit('navigate','wallet')"><strong>{{money(user.balance_cents)}}<small>元</small></strong><span>资金</span></button><button @click="emit('navigate','wallet')"><strong>{{money(user.frozen_cents+(account?.betting_frozen_cents??0))}}<small>元</small></strong><span>积分</span></button></div></section>
  <nav class="profile-quick" aria-label="账户快捷入口"><button @click="emit('wallet','deposit')"><ArrowDownToLine/>存款</button><button @click="emit('wallet','withdraw')"><ArrowUpFromLine/>提款</button><button @click="emit('navigate','commissions')"><Users/>邀请好友</button><button @click="emit('navigate','wallet')"><Wallet/>钱包</button></nav>
- <nav class="profile-services" aria-label="账户服务"><button @click="emit('navigate','promotions')"><Gift/>自助优惠<ChevronRight/></button><button @click="emit('navigate','ledger')"><History/>账变记录<ChevronRight/></button><button @click="emit('navigate','transactions')"><Wallet/>交易记录<ChevronRight/></button><button @click="emit('navigate','daily')"><ChartNoAxesCombined/>每日输赢<ChevronRight/></button><button @click="emit('navigate','records')"><FileText/>投注记录<ChevronRight/></button><button @click="passwordOpen=!passwordOpen" :aria-expanded="passwordOpen"><LockKeyhole/>修改登陆密码<ChevronRight/></button></nav>
- <section v-if="passwordOpen" class="surface profile-password"><h3>修改登陆密码</h3><form class="form-stack" @submit.prevent="changePassword"><label>原密码<input v-model="oldPassword" type="password" required maxlength="128" autocomplete="current-password"/></label><label>新密码<input v-model="newPassword" type="password" required minlength="10" maxlength="128" autocomplete="new-password" placeholder="至少10位"/></label><label>确认新密码<input v-model="confirmPassword" type="password" required minlength="10" maxlength="128" autocomplete="new-password"/></label><small>修改后，所有设备需要重新登录。</small><button class="primary-button" :disabled="busy">保存新密码</button></form></section>
+ <nav class="profile-services" aria-label="账户服务"><button @click="emit('navigate','promotions')"><Gift/>自助优惠<ChevronRight/></button><button @click="emit('navigate','ledger')"><History/>账变记录<ChevronRight/></button><button @click="emit('navigate','transactions')"><Wallet/>交易记录<ChevronRight/></button><button @click="emit('navigate','daily')"><ChartNoAxesCombined/>每日输赢<ChevronRight/></button><button @click="emit('navigate','records')"><FileText/>投注记录<ChevronRight/></button><button @click="passwordOpen=!passwordOpen" :aria-expanded="passwordOpen"><LockKeyhole/>修改登陆密码<ChevronRight/></button><button @click="secondaryOpen=!secondaryOpen" :aria-expanded="secondaryOpen"><ShieldCheck/>二级密码<span class="secondary-password-label">{{!user.secondary_password_set?'未设置':user.secondary_password_enabled?'已开启':'已关闭'}}</span><ChevronRight/></button></nav>
+ <SecondaryPasswordSettings v-if="secondaryOpen" @notify="emit('notify',$event)"/>
+ <section v-if="passwordOpen" class="surface profile-password"><h3>修改登陆密码</h3><form class="form-stack" @submit.prevent="changePassword"><label>原密码<input v-model="oldPassword" type="password" required maxlength="128" autocomplete="current-password"/></label><label>新密码<input v-model="newPassword" type="password" required minlength="8" maxlength="16" autocomplete="new-password" placeholder="8–16位"/></label><label>确认新密码<input v-model="confirmPassword" type="password" required minlength="8" maxlength="16" autocomplete="new-password"/></label><small>修改后，所有设备需要重新登录。</small><button class="primary-button" :disabled="busy">保存新密码</button></form></section>
  </template>
  <InviteFriends v-else-if="page==='commissions'" @notify="emit('notify',$event)"/>
  <AccountRecords v-else-if="page==='ledger'||page==='transactions'||page==='daily'" :kind="page" :key="page"/>
@@ -34,6 +37,7 @@ async function changePassword(){await action(async()=>{if(newPassword.value!==co
 </style>
 
 <style scoped>
+.secondary-password-label{margin-left:auto;color:#98909e;font-size:12px}.profile-services .secondary-password-label+svg{margin-left:0}
 .reference-wallet{max-width:960px;margin:0 auto;background:#fff}
 </style>
 

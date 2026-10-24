@@ -106,8 +106,8 @@ func TestRegistrationRequiredFieldsAndCredentialRules(t *testing.T) {
 		{"lowercase", "大写和小写", func(in *SecureRegistrationInput) { in.Password = "lowercase12345" }},
 		{"uppercase", "大写和小写", func(in *SecureRegistrationInput) { in.Password = "UPPERCASE12345" }},
 		{"digits", "大写和小写", func(in *SecureRegistrationInput) { in.Password = "123456789012" }},
-		{"short_password", "10–128", func(in *SecureRegistrationInput) { in.Password = "Ab12345" }},
-		{"long_password", "10–128", func(in *SecureRegistrationInput) { in.Password = "Ab" + strings.Repeat("1", 127) }},
+		{"short_password", "8–16", func(in *SecureRegistrationInput) { in.Password = "Ab12345" }},
+		{"long_password", "8–16", func(in *SecureRegistrationInput) { in.Password = "Ab" + strings.Repeat("1", 15) }},
 		{"name", "姓名", func(in *SecureRegistrationInput) { in.Name = " \t " }},
 		{"wechat", "微信号", func(in *SecureRegistrationInput) { in.Wechat = " \t " }},
 		{"phone", "手机号", func(in *SecureRegistrationInput) { in.Phone = "" }},
@@ -361,7 +361,7 @@ func TestLoginSecurityCancelExpiryAndCredentialChangesInvalidateChallenges(t *te
 			case "disabled":
 				must(t, s.SetStatus("admin", u.ID, "disabled"))
 			case "password":
-				must(t, s.ChangePassword(u.ID, testPassword, "changed-password-12345"))
+				must(t, s.ChangePassword(u.ID, testPassword, "changed-pass-123"))
 			default:
 				must(t, s.db.Update(func(tx *bolt.Tx) error {
 					current, err := get[storedUser](tx, "users", u.ID)

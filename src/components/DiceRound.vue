@@ -8,7 +8,7 @@ import DiceResult from './DiceResult.vue'
 
 const props = defineProps<{ state: State; phase: RoundPhase; now: number; busy: boolean; historyOpen: boolean }>()
 const emit = defineEmits<{ history: [] }>()
-const issue = computed(() => props.state.next_draw_at.slice(0, 16).replaceAll('-', '').replace('T', '').replace(':', ''))
+const issue = computed(() => props.state.next_draw_at.slice(0, 16).replace(/-/g, '').replace('T', '').replace(':', ''))
 const unavailable = computed(() => props.phase === 'syncing' || props.phase === 'paused')
 const numbers = computed(() => props.state.latest?.numbers ?? [])
 

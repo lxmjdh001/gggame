@@ -24,7 +24,7 @@ onMounted(()=>void load())
     <label>最低充值金额（元）<input v-model="minimum" inputmode="decimal" placeholder="至少 1.00" :disabled="saving||loading" :required="config.enabled"/></label>
     <label>最高充值金额（元）<input v-model="maximum" inputmode="decimal" placeholder="最高 1,000,000.00" :disabled="saving||loading" :required="config.enabled"/></label>
    </div>
-   <p class="form-hint">USDT 数量支持正整数，入账金额按提交时的汇率换算至分。提交申请不会自动入账，需在“资金审核”核对网络、收款地址和完整交易哈希后通过。</p>
+   <p class="form-hint">USDT 数量支持正整数，入账金额按提交时的汇率换算至分。客户只需填写交易 ID 后5位，后缀可能重复，不能单凭后缀认定到账。请在“资金审核”核对实际链上交易、网络、收款地址及金额，确认未重复入账后再通过。</p>
    <p class="form-hint">修改设置只影响新申请；已提交申请保留原收款信息与汇率。停用后不再接受新的 USDT 申请。</p>
    <div class="payment-actions"><small>配置版本 {{config.version}}</small><button class="primary-button" :disabled="saving||loading">{{saving?'保存中…':'保存收款设置'}}</button></div>
   </form>

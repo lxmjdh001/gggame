@@ -6,24 +6,29 @@ import (
 )
 
 type User struct {
-	Wechat                string    `json:"wechat,omitempty"`
-	WithdrawalPasswordSet bool      `json:"withdrawal_password_set"`
-	SecurityQuestionSet   bool      `json:"security_question_set"`
-	Phone                 string    `json:"phone,omitempty"`
-	Name                  string    `json:"name,omitempty"`
-	InviterUsername       string    `json:"inviter_username,omitempty"`
-	ID                    string    `json:"id"`
-	Username              string    `json:"username"`
-	Role                  string    `json:"role"`
-	Status                string    `json:"status"`
-	InviteCode            string    `json:"invite_code"`
-	InviterID             string    `json:"inviter_id,omitempty"`
-	Balance               int64     `json:"balance_cents"`
-	Frozen                int64     `json:"frozen_cents"`
-	CreatedAt             time.Time `json:"created_at"`
+	SecondaryPasswordSet     bool      `json:"secondary_password_set"`
+	SecondaryPasswordEnabled bool      `json:"secondary_password_enabled"`
+	Wechat                   string    `json:"wechat,omitempty"`
+	WithdrawalPasswordSet    bool      `json:"withdrawal_password_set"`
+	SecurityQuestionSet      bool      `json:"security_question_set"`
+	Phone                    string    `json:"phone,omitempty"`
+	Name                     string    `json:"name,omitempty"`
+	InviterUsername          string    `json:"inviter_username,omitempty"`
+	ID                       string    `json:"id"`
+	Username                 string    `json:"username"`
+	Role                     string    `json:"role"`
+	Status                   string    `json:"status"`
+	InviteCode               string    `json:"invite_code"`
+	InviterID                string    `json:"inviter_id,omitempty"`
+	Balance                  int64     `json:"balance_cents"`
+	Frozen                   int64     `json:"frozen_cents"`
+	CreatedAt                time.Time `json:"created_at"`
 }
 type storedUser struct {
 	User
+	SecondaryHash      string
+	SecondarySalt      string
+	SecondaryRevision  string
 	Hash               string
 	PasswordSalt       string
 	WithdrawalHash     string
@@ -33,8 +38,10 @@ type storedUser struct {
 	SecuritySalt       string
 }
 type Login struct {
-	UserID  string
-	Expires time.Time
+	UserID              string
+	Expires             time.Time
+	SecondaryVerifiedAt time.Time
+	SecondaryRevision   string
 }
 type Ledger struct {
 	ID        string    `json:"id"`
@@ -135,6 +142,7 @@ type Audit struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 type OrderInput struct {
+	gameToken   string
 	AmountCents *int64 `json:"amount_cents,omitempty"`
 	UnitCents   int64  `json:"unit_cents"`
 	SessionID   string `json:"session_id"`

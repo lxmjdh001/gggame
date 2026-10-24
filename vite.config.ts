@@ -4,6 +4,7 @@ import vue from '@vitejs/plugin-vue'
 const proxy = { '/api': { target: 'http://127.0.0.1:8082', changeOrigin: false } }
 export default defineConfig({
   plugins: [vue()],
+  build: { target: ['es2018', 'safari13', 'chrome80'] },
   server: {
     proxy,
     strictPort: true,

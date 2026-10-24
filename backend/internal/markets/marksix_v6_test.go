@@ -101,8 +101,8 @@ func v6Clone(m Market) Market {
 
 func TestMarkSixV6CatalogScopeAndLegacySalesIsolation(t *testing.T) {
 	catalog := Catalog("lhc")
-	if len(catalog) != 630 {
-		t.Fatalf("expected full 630 item catalog; got %d", len(catalog))
+	if len(catalog) != 718 {
+		t.Fatalf("expected full 718 item catalog; got %d", len(catalog))
 	}
 	seen := map[string]bool{}
 	tiers, counted, oldNumbers := 0, 0, 0
@@ -143,7 +143,7 @@ func TestMarkSixV6CatalogScopeAndLegacySalesIsolation(t *testing.T) {
 	if oldNumbers != 343 || tiers != 2 || counted != 12 {
 		t.Fatal("wrong exact/tier/count market coverage", oldNumbers, tiers, counted)
 	}
-	for _, id := range []string{"lhc6.link.four_one", "lhc6.miss.12", "lhc6.link_zodiac.6", "lhc6.link_tail.6", "lhc6.combined_zodiac.out.2", "lhc5.combined_zodiac.in.2", "size2.p7.big", "parity2.p1.odd"} {
+	for _, id := range []string{"lhc6.link.four_one", "lhc6.miss.13", "lhc6.link_zodiac.6", "lhc6.miss_zodiac.5", "lhc6.link_tail.6", "lhc6.combined_zodiac.out.2", "lhc5.combined_zodiac.in.2", "size2.p7.big", "parity2.p1.odd"} {
 		if _, ok := Find("lhc", id); ok {
 			t.Fatal("retired or excluded market sold", id)
 		}

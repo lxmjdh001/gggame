@@ -17,10 +17,18 @@ type Member struct {
 	TodayStake int64  `json:"today_stake_cents"`
 }
 
-// Normalize only the old system-generated caption; keep the original ledger immutable.
+// Normalize display captions and explicit legacy adjustment notes without rewriting stored ledgers.
 func ledgerForDisplay(v Ledger) Ledger {
 	if v.Kind == "registration_bonus" && v.Note == "注册赠送（开发测试）" {
 		v.Note = "注册赠送"
+	}
+	if v.Kind == "admin_adjust" {
+		switch strings.TrimSpace(v.Note) {
+		case "充值":
+			v.Kind = "admin_deposit"
+		case "奖励":
+			v.Kind = "admin_reward"
+		}
 	}
 	return v
 }

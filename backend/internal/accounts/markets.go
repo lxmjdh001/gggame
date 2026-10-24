@@ -13,10 +13,12 @@ import (
 )
 
 type Quote struct {
-	MarketID      string           `json:"market_id"`
-	OddsMilli     int64            `json:"odds_milli"`
-	Enabled       bool             `json:"enabled"`
-	TierOddsMilli map[string]int64 `json:"tier_odds_milli,omitempty"`
+	MarketID               string           `json:"market_id"`
+	OddsMilli              int64            `json:"odds_milli"`
+	Enabled                bool             `json:"enabled"`
+	TierOddsMilli          map[string]int64 `json:"tier_odds_milli,omitempty"`
+	CurrentZodiacOddsMilli int64            `json:"current_zodiac_odds_milli,omitempty"`
+	ZeroTailOddsMilli      int64            `json:"zero_tail_odds_milli,omitempty"`
 }
 type MarketBook struct {
 	SessionID      string                  `json:"session_id"`
@@ -25,6 +27,7 @@ type MarketBook struct {
 	MarkSixContext *markets.MarkSixContext `json:"marksix_context,omitempty"`
 }
 type MarketOrderInput struct {
+	gameToken     string
 	AmountCents   *int64           `json:"amount_cents,omitempty"`
 	SessionID     string           `json:"session_id"`
 	Issue         string           `json:"issue"`
@@ -142,6 +145,9 @@ func placeMarketOrder(tx *bolt.Tx, id string, in MarketOrderInput, now time.Time
 		if e != nil {
 			return e
 		}
+		if e = requireGameAccess(tx, id, in.gameToken, now); e != nil {
+			return e
+		}
 		prior, e := idem(tx, scope+id, in.Key, in)
 		if e != nil {
 			return e
@@ -198,6 +204,9 @@ func placeMarketOrder(tx *bolt.Tx, id string, in MarketOrderInput, now time.Time
 		if err := validateMarketQuote(m, q); err != nil {
 			return err
 		}
+		// Resolve conditional prices only after binding and validating this
+		// issue's selection/year. The resulting actual price is locked in Order.
+		q.OddsMilli = selectionQuoteOdds(m, q)
 		if err := validateTierOdds(m, in.TierOddsMilli); err != nil {
 			return err
 		}

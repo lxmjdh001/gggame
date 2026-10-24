@@ -371,7 +371,7 @@ func TestUSDTInvalidRequestsDoNotWriteAndApprovalChecksClaim(t *testing.T) {
 		func(in *WalletSubmission) { in.USDTAmount = "9999999999999999999" },
 		func(in *WalletSubmission) { in.SettingsVersion-- },
 		func(in *WalletSubmission) { in.Key = "short" },
-		func(in *WalletSubmission) { in.TransactionID = "abcde" },
+		func(in *WalletSubmission) { in.TransactionID = "abcdz" },
 		func(in *WalletSubmission) { in.TransactionID = "0x" + in.TransactionID },
 		func(in *WalletSubmission) { in.TransactionID = strings.Repeat("z", 64) },
 		func(in *WalletSubmission) { in.Note = strings.Repeat("a", 501) },

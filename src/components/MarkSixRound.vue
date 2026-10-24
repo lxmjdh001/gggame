@@ -8,7 +8,7 @@ import MarkSixBall from './MarkSixBall.vue'
 import { markSixLunarYear, markSixZodiacLabel } from '../lib/marksixZodiac'
 const props = defineProps<{ state: State; phase: RoundPhase; now: number; busy: boolean; historyOpen: boolean; refreshing?: boolean }>()
 const emit = defineEmits<{ history: []; refresh: [] }>()
-const issue = computed(() => props.state.next_draw_at.slice(0,16).replaceAll('-','').replace('T','').replace(':',''))
+const issue = computed(() => props.state.next_draw_at.slice(0,16).replace(/-/g,'').replace('T','').replace(':',''))
 const legacyAustralia = computed(() => props.state.session.id==='lhc-au' && props.state.latest?.numbers.length===8)
 const unavailable = computed(() => ['syncing','paused'].includes(props.phase))
 function countdown(target:number) {
