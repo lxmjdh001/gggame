@@ -1732,6 +1732,25 @@
     }
   },
   "paths": {
+    "/api/v1/admin/agents": {
+      "get": {
+        "summary": "管理员只读代理邀请关系图",
+        "description": "按直属关系分页加载，团队统计覆盖全部层级且不含本人，包含停用成员。充值是历史累计正数已审核充值和后台充值，不含奖励，不抵扣扣减，不随提现归零。只返回基础资料、邀请关系和聚合数据，不返回密码、哈希、联系方式或会话。循环关系报错，不修改数据库。",
+        "security": [{"SessionCookie": []}],
+        "parameters": [
+          {"name": "username", "in": "query", "schema": {"type": "string", "maxLength": 32}, "description": "完整账号，忽略大小写；与parent_id互斥"},
+          {"name": "parent_id", "in": "query", "schema": {"type": "string", "maxLength": 128}, "description": "查看该账号的直属下级；省略两项时查看顶层"},
+          {"name": "page", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 1000000, "default": 1}}
+        ],
+        "responses": {
+          "200": {"description": "data含items,total,page,page_size（20）及可选parent；节点含id,username,name,role,status,created_at,inviter_id,inviter_username,missing_parent,deposit_cents,direct_count,team_count,team_deposit_cents。响应no-store。"},
+          "400": {"description": "参数不正确或邀请关系存在循环"},
+          "401": {"description": "未登录"},
+          "403": {"description": "非管理员或账户停用"},
+          "404": {"description": "根账号或上级账号不存在"}
+        }
+      }
+    },
     "/api/v1/auth/secondary-password/status": {
       "get": {
         "summary": "读取当前登录会话的二级密码与游戏授权状态",

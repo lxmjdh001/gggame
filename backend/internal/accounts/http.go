@@ -504,6 +504,15 @@ func (h *HTTP) Bind(mux *http.ServeMux) {
 		v, e := h.Store.PendingRequests(u.ID)
 		result(w, v, e)
 	}))
+	mux.HandleFunc("GET /api/v1/admin/agents", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		page, err := requestPage(r)
+		if err != nil {
+			result(w, nil, err)
+			return
+		}
+		v, err := h.Store.AgentTree(u.ID, r.URL.Query().Get("username"), r.URL.Query().Get("parent_id"), page)
+		result(w, v, err)
+	}))
 	mux.HandleFunc("GET /api/v1/admin/{resource}", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
 		page, err := requestPage(r)
 		if err != nil {
