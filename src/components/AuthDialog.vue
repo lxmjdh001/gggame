@@ -3,19 +3,23 @@ import {ref,computed,onMounted,onUnmounted,nextTick,watch} from 'vue'
 import {ChevronLeft,ShieldCheck,ArrowRight,RefreshCw} from 'lucide-vue-next'
 import {api,user,refreshAccount,site,type User} from '../api/account'
 import {validNewPasswordLength} from '../lib/passwordPolicy'
+import {observeAuthViewport} from '../lib/authViewport'
 const emit=defineEmits<{close:[];success:[]}>()
 const register=ref(!!new URLSearchParams(location.search).get('invite')),username=ref(''),password=ref(''),confirm=ref(''),phone=ref(''),name=ref(''),invite=ref(new URLSearchParams(location.search).get('invite')??''),error=ref(''),busy=ref(false),dialog=ref<HTMLElement|null>(null)
 interface CaptchaChallenge {id:string;image_data_url:string;expires_at:string}
 const wechat=ref(''),withdrawalPassword=ref(''),captchaAnswer=ref(''),captcha=ref<CaptchaChallenge|null>(null),captchaLoading=ref(false),captchaError=ref('')
 const locked=computed(()=>busy.value)
+const viewportHeight=ref<number|null>(null)
+let stopViewport:(()=>void)|undefined
 let previous:HTMLElement|null=null,previousOverflow='',mounted=true
 onMounted(async()=>{
  previous=document.activeElement as HTMLElement
  previousOverflow=document.body.style.overflow;document.body.style.overflow='hidden'
+ stopViewport=observeAuthViewport(height=>{viewportHeight.value=height})
  if(register.value)void loadCaptcha()
  await nextTick();dialog.value?.querySelector('input')?.focus()
 })
-onUnmounted(()=>{mounted=false;document.body.style.overflow=previousOverflow;if(previous?.isConnected)previous.focus()})
+onUnmounted(()=>{mounted=false;stopViewport?.();document.body.style.overflow=previousOverflow;if(previous?.isConnected)previous.focus()})
 watch(register,next=>{if(next&&(!captcha.value||Date.parse(captcha.value.expires_at)<=Date.now()))void loadCaptcha()})
 watch(locked,next=>{if(next)void nextTick(()=>dialog.value?.focus())})
 async function loadCaptcha(){
@@ -86,7 +90,7 @@ async function submit(){
 </script>
 
 <template>
- <div class="auth-overlay" @click.self="close" @keydown.esc.stop.prevent="close" @keydown="trap">
+ <div class="auth-overlay" :style="viewportHeight?{'--auth-viewport-height':viewportHeight+'px'}:undefined" @click.self="close" @keydown.esc.stop.prevent="close" @keydown="trap">
   <section ref="dialog" class="auth-panel" :class="{'auth-register':register}" role="dialog" aria-modal="true" aria-labelledby="auth-title" tabindex="-1">
    <header class="auth-header">
     <button class="auth-back" type="button" :aria-label="register?'关闭注册':'关闭登录'" :disabled="busy" @click="close"><ChevronLeft :size="27"/></button>
@@ -126,15 +130,15 @@ async function submit(){
 </template>
 
 <style scoped>
-.auth-overlay{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;padding:28px;background:#21113799;backdrop-filter:blur(7px);overscroll-behavior:contain}
-.auth-panel{display:flex;flex-direction:column;width:510px;max-width:100%;max-height:calc(100dvh - 56px);overflow:hidden;border:1px solid #bd8ff54d;border-radius:20px;outline:none;background:linear-gradient(155deg,#8248c5 0%,#9051cc 52%,#7540b6 100%);color:#fff;box-shadow:0 26px 80px #1e0a4966}
+.auth-overlay{position:fixed;top:0;right:0;bottom:0;left:0;inset:0;height:100vh;height:100dvh;height:var(--auth-viewport-height,100vh);z-index:100;display:flex;align-items:center;justify-content:center;padding:28px;background:#21113799;backdrop-filter:blur(7px);overscroll-behavior:contain}
+.auth-panel{display:flex;flex-direction:column;min-height:0;width:510px;max-width:100%;max-height:calc(100vh - 56px);max-height:calc(100dvh - 56px);max-height:calc(var(--auth-viewport-height,100vh) - 56px);overflow:hidden;border:1px solid #bd8ff54d;border-radius:20px;outline:none;background:linear-gradient(155deg,#8248c5 0%,#9051cc 52%,#7540b6 100%);color:#fff;box-shadow:0 26px 80px #1e0a4966}
 .auth-header{display:grid;grid-template-columns:64px minmax(0,1fr) 64px;align-items:center;flex-shrink:0;min-height:66px;padding:4px 13px;background:linear-gradient(110deg,#5b42ed 0%,#7428e9 58%,#881ee5 100%);border-bottom:1px solid #d0b0ff24}
 .auth-header h2{margin:0;text-align:center;color:#fff;font-size:19px;font-weight:600;letter-spacing:1px}
 .auth-back{display:grid;place-items:center;width:42px;height:42px;padding:0;border-radius:10px;color:#f8f2ff}
 .auth-back:hover:not(:disabled){background:#ffffff13}
 .auth-identity{display:flex;align-items:baseline;justify-content:flex-end;gap:4px;white-space:nowrap;color:#fff0bf}
 .auth-identity strong{font:italic 700 22px Georgia,serif;letter-spacing:-1px}.auth-identity span{font-size:12px;font-weight:500}
-.auth-body{min-height:0;overflow-y:auto;padding:0 32px 25px;overscroll-behavior:contain;scrollbar-color:#c5a0ef #6c38a5}
+.auth-body{flex:1 1 auto;min-height:0;overflow-x:hidden;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:auto;touch-action:pan-y pinch-zoom;padding:0 32px 25px;overscroll-behavior:contain;scrollbar-color:#c5a0ef #6c38a5}
 .auth-tabs{display:flex;justify-content:center;gap:62px;padding:0 12px;margin-bottom:25px;border-bottom:1px solid #dbc0f325}
 .auth-tabs button{position:relative;min-width:86px;padding:19px 12px 17px;font-size:18px;font-weight:600;color:#e1c9f5;letter-spacing:2px}
 .auth-tabs button.active{color:#fff}.auth-tabs button.active:after{content:'';position:absolute;bottom:-1px;left:9px;right:9px;height:3px;border-radius:5px;background:#bdb0ff;box-shadow:0 0 12px #e2caff50}
@@ -152,9 +156,9 @@ async function submit(){
 .auth-panel button:disabled{opacity:.55;cursor:not-allowed}.auth-panel button:focus-visible{outline:2px solid #f3ddff;outline-offset:3px}.auth-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media(max-width:640px){
  .auth-overlay{display:block;padding:0;background:#8447c5;backdrop-filter:none}
- .auth-panel{width:100%;max-width:none;height:100dvh;max-height:none;border:0;border-radius:0;box-shadow:none;background:linear-gradient(145deg,#7d42c5 0%,#9455ce 58%,#8044c0 100%)}
+ .auth-panel{width:100%;max-width:none;height:100%;max-height:100%;border:0;border-radius:0;box-shadow:none;background:linear-gradient(145deg,#7d42c5 0%,#9455ce 58%,#8044c0 100%)}
  .auth-header{grid-template-columns:58px minmax(0,1fr) 58px;min-height:58px;padding:env(safe-area-inset-top,0px) 9px 0}.auth-header h2{font-size:18px}.auth-identity strong{font-size:21px}.auth-identity span{font-size:11px}
- .auth-body{flex:1;padding:0 20px calc(28px + env(safe-area-inset-bottom,0px))}.auth-tabs{gap:54px;margin-bottom:25px}.auth-tabs button{min-width:90px;padding:21px 10px 17px;font-size:19px}
+ .auth-body{padding:0 20px 28px;padding-bottom:calc(28px + env(safe-area-inset-bottom,0px))}.auth-tabs{gap:54px;margin-bottom:25px}.auth-tabs button{min-width:90px;padding:21px 10px 17px;font-size:19px}
  .auth-form fieldset{gap:16px}.auth-field{grid-template-columns:76px minmax(0,1fr);gap:6px}.auth-label{font-size:13px}.auth-field input,.auth-field select{height:48px;padding:0 11px;font-size:16px}.auth-field select{font-size:12px}.auth-field input::placeholder{font-size:11px}.auth-hint{margin-left:82px;font-size:10px}.auth-submit{margin-top:27px;min-height:47px}.auth-footer{margin-top:25px}
 }
 @media(max-width:360px){.auth-body{padding-left:14px;padding-right:14px}.auth-field{grid-template-columns:72px minmax(0,1fr);gap:4px}.auth-label{font-size:12px;gap:3px}.auth-hint{margin-left:76px}.auth-field input{padding-left:9px;padding-right:9px}.auth-field input::placeholder{font-size:10px}.auth-captcha-image{width:101px}.auth-captcha-image img{width:81px}}
