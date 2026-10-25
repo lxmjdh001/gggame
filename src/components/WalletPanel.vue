@@ -1,34 +1,36 @@
 <script setup lang="ts">
 import PaymentRequestDetails from './PaymentRequestDetails.vue'
+import WalletWithdrawalAddress from './WalletWithdrawalAddress.vue'
 import {computed,onMounted,onUnmounted,ref,watch} from 'vue'
-import {ArrowDownToLine,ArrowUpFromLine,Check,ChevronDown,ChevronLeft,Copy,CreditCard,FileText,LockKeyhole,RefreshCw,Wallet} from 'lucide-vue-next'
+import {Check,ChevronDown,ChevronLeft,Copy,CreditCard,FileText,LockKeyhole,RefreshCw,Wallet} from 'lucide-vue-next'
 import {APIError,account,api,cents,datetime,key,labels,money,refreshAccount,user,type User,type WalletRequest,type WithdrawalSettings} from '../api/account'
 
 type WalletKind='deposit'|'withdraw'
-interface EnabledPaymentSettings {version:number;enabled:true;network:'TRC20'|'ERC20';address:string;rate_yuan:string;min_amount_cents:number;max_amount_cents:number}
-type PaymentSettings=EnabledPaymentSettings|{version:number;enabled:false}
+interface EnabledPaymentSettings {version:number;enabled:true;network:'TRC20'|'ERC20';address:string;rate_yuan:string;min_amount_cents:number;max_amount_cents:number;qr_code_data_url?:string;manual_qr_code_data_url?:string}
+type PaymentSettings=EnabledPaymentSettings|{version:number;enabled:false;manual_qr_code_data_url?:string}
 type RequestPayload={kind:WalletKind;amount_cents:number;note:string;transaction_id?:string;payment_method?:'usdt';withdrawal_settings_version?:number;withdrawal_rate_version?:number;payout_network?:string;payout_address?:string;withdrawal_password?:string;withdrawal_password_confirmation?:string;key:string}|{kind:'deposit';payment_method:'usdt';usdt_amount:string;transaction_id:string;settings_version:number;note:string;key:string}
 const props=defineProps<{mode:WalletKind}>()
 const emit=defineEmits<{back:[];login:[];notify:[message:string];busy:[busy:boolean]}>()
+const addressSaving=ref(false)
 const kind=ref<WalletKind>(props.mode),busy=ref(false),refreshing=ref(false),error=ref('')
 const drafts=ref({deposit:{amount:'',note:''},withdraw:{amount:'',note:''}})
 const draft=computed(()=>drafts.value[kind.value])
-const method=ref<'manual'|'usdt'>('manual'),usdtAmount=ref(''),transactionId=ref(''),manualTransactionId=ref(''),usdtNote=ref(''),withdrawalPassword=ref(''),withdrawalConfirmation=ref('')
+const usdtAmount=ref(''),transactionId=ref(''),manualTransactionId=ref(''),usdtNote=ref(''),withdrawalPassword=ref(''),withdrawalConfirmation=ref('')
 const withdrawalSettings=ref<WithdrawalSettings|null>(null),withdrawalError=ref(''),payoutNetwork=ref('TRC20'),payoutAddress=ref('')
 const settings=ref<PaymentSettings|null>(null),settingsLoading=ref(false),settingsError=ref('')
 const pinSetupOpen=ref(false),pinSetupBusy=ref(false),currentPin=ref(''),newPin=ref(''),confirmPin=ref(''),pinSetupError=ref('')
 const pending=ref<{owner:{id:string;username:string};payload:RequestPayload;payment?:EnabledPaymentSettings;withdrawal?:WithdrawalSettings}|null>(null)
-const locked=computed(()=>busy.value||pinSetupBusy.value||!!pending.value)
+const locked=computed(()=>busy.value||pinSetupBusy.value||addressSaving.value||!!pending.value)
 const needsPin=computed(()=>kind.value==='withdraw'&&!!user.value&&!user.value.withdrawal_password_set)
 const showPinSetup=computed(()=>kind.value==='withdraw'&&!!user.value&&(needsPin.value||pinSetupOpen.value))
 const requestsOpen=ref(false)
 const kindLabel=computed(()=>kind.value==='deposit'?'存款':'提款')
 const activeWithdrawal=computed(()=>pending.value?.withdrawal??withdrawalSettings.value)
-const isUsdtWithdrawal=computed(()=>kind.value==='withdraw'&&method.value==='usdt')
+const isUsdtWithdrawal=computed(()=>kind.value==='withdraw')
 const wagerReady=computed(()=>!!account.value?.wagering?.eligible)
 const feePreview=computed(()=>{try{const amount=cents(draft.value.amount);if(amount<100||amount>100000000||!activeWithdrawal.value)return null;const fee=Math.floor((amount*activeWithdrawal.value.fee_bps+5000)/10000);return {fee,net:amount-fee}}catch{return null}})
 const usdtPayoutPreview=computed(()=>{if(!feePreview.value||!activeWithdrawal.value)return '—';const [whole,fraction='']=activeWithdrawal.value.rate_yuan.split('.');if(!whole)return '—';const micros=BigInt(whole)*1000000n+BigInt(fraction.padEnd(6,'0'));if(micros<=0n)return '—';const n=BigInt(Math.max(0,feePreview.value.net))*10000000000n/micros;return `${n/1000000n}.${String(n%1000000n).padStart(6,'0')}`})
-const isUsdt=computed(()=>kind.value==='deposit'&&method.value==='usdt')
+const isUsdt=computed(()=>kind.value==='deposit')
 const activePayment=computed(()=>pending.value?.payment??(settings.value?.enabled?settings.value:null))
 const usdtAvailable=computed(()=>!!activePayment.value)
 const usdtUnavailable=computed(()=>!user.value?'登录后查看 USDT 通道':settingsLoading.value?'正在读取支付配置':settingsError.value||'USDT 通道暂未开放')
@@ -46,7 +48,7 @@ const walletLabel=(value:string)=>({deposit:'存款',withdraw:'提款',withdraw_
 let mounted=true
 watch(locked,value=>emit('busy',value),{immediate:true,flush:'sync'})
 watch(()=>props.mode,value=>{if(!locked.value){kind.value=value;error.value=''}})
-function clearDrafts(){drafts.value={deposit:{amount:'',note:''},withdraw:{amount:'',note:''}};usdtAmount.value='';transactionId.value='';manualTransactionId.value='';usdtNote.value='';withdrawalPassword.value='';withdrawalConfirmation.value='';method.value='manual';payoutAddress.value=''}
+function clearDrafts(){drafts.value={deposit:{amount:'',note:''},withdraw:{amount:'',note:''}};usdtAmount.value='';transactionId.value='';manualTransactionId.value='';usdtNote.value='';withdrawalPassword.value='';withdrawalConfirmation.value='';payoutAddress.value=''}
 watch(()=>user.value?.id,(next,previous)=>{
  settings.value=null;settingsError.value='';withdrawalSettings.value=null;withdrawalError.value='';payoutAddress.value=''
  currentPin.value='';newPin.value='';confirmPin.value='';pinSetupError.value='';pinSetupOpen.value=false
@@ -58,11 +60,11 @@ watch(()=>user.value?.id,(next,previous)=>{
    error.value=`已切换账号，原申请未向当前账号提交。${name} 的申请结果仍待确认，请登录该账号查看申请记录。`
    emit('notify',error.value)
   }
+  if(next===pending.value?.owner.id&&'payout_address' in pending.value.payload){payoutNetwork.value=pending.value.payload.payout_network??'TRC20';payoutAddress.value=pending.value.payload.payout_address??''}
  }else if(previous&&next!==previous){clearDrafts();error.value=''}
  if(next){void loadSettings();void loadWithdrawalSettings()}
 },{flush:'sync'})
-function switchKind(next:WalletKind){if(locked.value)return;kind.value=next;method.value='manual';error.value='';withdrawalPassword.value='';withdrawalConfirmation.value='';currentPin.value='';newPin.value='';confirmPin.value='';pinSetupError.value='';pinSetupOpen.value=false}
-function switchMethod(next:'manual'|'usdt'){if(locked.value||next==='usdt'&&(kind.value==='deposit'?!usdtAvailable.value:!activeWithdrawal.value?.usdt_enabled))return;method.value=next;error.value=''}
+function switchKind(next:WalletKind){if(locked.value)return;kind.value=next;error.value='';withdrawalPassword.value='';withdrawalConfirmation.value='';currentPin.value='';newPin.value='';confirmPin.value='';pinSetupError.value='';pinSetupOpen.value=false}
 async function loadSettings(){
  const owner=user.value?.id;if(!owner)return
  settingsLoading.value=true
@@ -72,8 +74,8 @@ async function loadSettings(){
    if(result.enabled){
     const normalized={...result,version:result.version??0,network:result.network??'',address:result.address??'',rate_yuan:result.rate_yuan??'',min_amount_cents:result.min_amount_cents??0,max_amount_cents:result.max_amount_cents??0}
     settings.value=normalized.address&&['TRC20','ERC20'].includes(normalized.network)&&normalized.rate_yuan&&normalized.max_amount_cents>0?normalized:{version:normalized.version,enabled:false}
-   }else settings.value={version:result.version??0,enabled:false}
-   if(!settings.value.enabled&&method.value==='usdt'&&!pending.value){method.value='manual';error.value='USDT 通道暂未开放，请选择其他存款方式'}
+   }else settings.value={version:result.version??0,enabled:false,manual_qr_code_data_url:result.manual_qr_code_data_url}
+   if(!settings.value.enabled&&!pending.value){error.value='USDT充值通道暂未开放，请稍后刷新'}
    settingsError.value=''
   }
  }
@@ -109,7 +111,7 @@ async function saveWithdrawalPassword(){
  finally{pinSetupBusy.value=false}
 }
 async function submit(){
- if(busy.value||pinSetupBusy.value)return
+ if(busy.value||pinSetupBusy.value||addressSaving.value)return
  if(!user.value){emit('login');return}
  error.value=''
  if(!pending.value){
@@ -133,7 +135,7 @@ async function submit(){
     if(kind.value==='withdraw'&&!/^\d{6}$/.test(withdrawalPassword.value))throw new Error('请输入 6 位数字提现密码')
     if(kind.value==='withdraw'&&withdrawalPassword.value!==withdrawalConfirmation.value)throw new Error('两次提现密码不一致')
     if(kind.value==='withdraw'){
-     if(!wagerReady.value)throw new Error('打码量未达标，暂不可提现')
+     if(!wagerReady.value)throw new Error('打码流水未达标，暂不可提现')
      withdrawal=activeWithdrawal.value??undefined;if(!withdrawal)throw new Error('请刷新提现设置后重试')
      if(isUsdtWithdrawal.value&&!withdrawal.usdt_enabled)throw new Error('USDT提现暂未开放')
      if(isUsdtWithdrawal.value&&!(payoutNetwork.value==='TRC20'?/^T[1-9A-HJ-NP-Za-km-z]{33}$/:/^0x[0-9a-fA-F]{40}$/).test(payoutAddress.value.trim()))throw new Error('请填写与所选网络匹配的完整USDT收款地址')
@@ -149,7 +151,7 @@ async function submit(){
  try{
   await api<WalletRequest>('/wallet/requests','POST',attempt.payload)
   if(pending.value!==attempt)return
-  pending.value=null;drafts.value[attempt.payload.kind]={amount:'',note:''};if(attempt.payload.kind==='deposit')manualTransactionId.value='';else payoutAddress.value='';withdrawalPassword.value='';withdrawalConfirmation.value='';if('payment_method' in attempt.payload){usdtAmount.value='';transactionId.value='';usdtNote.value=''};requestsOpen.value=true
+  pending.value=null;drafts.value[attempt.payload.kind]={amount:'',note:''};if(attempt.payload.kind==='deposit')manualTransactionId.value='';withdrawalPassword.value='';withdrawalConfirmation.value='';if('payment_method' in attempt.payload){usdtAmount.value='';transactionId.value='';usdtNote.value=''};requestsOpen.value=true
   const message=`${attempt.payload.kind==='deposit'?'存款':'提款'}申请已提交，请等待审核`
   if(user.value?.id!==attempt.owner.id){emit('notify',message);return}
   try{await refreshAccount();emit('notify',message)}catch{error.value='申请已提交，记录刷新失败，请点击刷新查看进度';emit('notify',message)}
@@ -169,23 +171,24 @@ onUnmounted(()=>{mounted=false;emit('busy',false)})
   <div class="wallet-content">
    <div class="wallet-mode" role="tablist" aria-label="选择存款或提款"><button role="tab" :aria-selected="kind==='deposit'" :class="{active:kind==='deposit'}" :disabled="locked" @click="switchKind('deposit')">存款</button><button role="tab" :aria-selected="kind==='withdraw'" :class="{active:kind==='withdraw'}" :disabled="locked" @click="switchKind('withdraw')">提款</button></div>
    <div class="wallet-balance"><div><span>可用余额</span><strong>{{user?money(user.balance_cents):'—'}}<small>元</small></strong></div><Wallet :size="25"/></div>
-   <section class="wallet-method-section" aria-labelledby="wallet-method-heading"><h2 id="wallet-method-heading">{{kind==='deposit'?'支付方式':'提款方式'}}</h2><div class="wallet-methods"><button class="wallet-method" :class="{selected:method==='manual'}" :aria-pressed="method==='manual'" :disabled="locked" @click="switchMethod('manual')"><component :is="kind==='deposit'?ArrowDownToLine:ArrowUpFromLine" :size="26"/><span>人工{{kindLabel}}</span><Check v-if="method==='manual'" :size="11"/></button><button v-if="kind==='deposit'||activeWithdrawal?.usdt_enabled" class="wallet-method" :class="{selected:method==='usdt'}" :aria-pressed="method==='usdt'" :disabled="locked||(kind==='deposit'?!usdtAvailable:!activeWithdrawal?.usdt_enabled)" @click="switchMethod('usdt')"><CreditCard :size="26"/><span>USDT 账户</span><Check v-if="method==='usdt'" :size="11"/></button><slot name="payment-methods" :kind="kind" :locked="locked"/></div><p v-if="kind==='deposit'&&!usdtAvailable" class="wallet-method-note">{{usdtUnavailable}}<button v-if="user" :disabled="settingsLoading||locked" @click="loadSettings">刷新</button></p></section>
+   <section class="wallet-method-section" aria-labelledby="wallet-method-heading"><h2 id="wallet-method-heading">{{kind==='deposit'?'充值方式':'提款方式'}}</h2><div class="wallet-methods"><div class="wallet-method selected"><CreditCard :size="26"/><span>USDT 账户</span><Check :size="11"/></div></div><p v-if="kind==='deposit'&&!usdtAvailable" class="wallet-method-note">{{usdtUnavailable}}<button v-if="user" :disabled="settingsLoading||locked" @click="loadSettings">刷新</button></p><p v-if="kind==='withdraw'&&!activeWithdrawal?.usdt_enabled" class="wallet-method-note">USDT提现通道暂未开放，请稍后刷新。</p></section>
    <section v-if="isUsdt&&activePayment" class="wallet-usdt-details" aria-label="USDT 收款信息"><div class="wallet-address-row"><span>收款地址</span><code>{{activePayment.address}}</code><button :disabled="locked" @click="copyAddress"><Copy :size="12"/>复制</button></div><div class="wallet-payment-row"><span>转账网络</span><strong>{{activePayment.network}}</strong></div><div class="wallet-payment-row"><span>USDT 汇率</span><strong>1 USDT = {{activePayment.rate_yuan}} 元</strong></div><div class="wallet-payment-row"><span>存款金额</span><strong>{{estimatedCents===null?'—':money(estimatedCents)}} 元</strong></div></section>
+   <section v-if="isUsdt&&activePayment?.qr_code_data_url" class="wallet-payment-qr" aria-label="充值收款二维码"><img :src="activePayment.qr_code_data_url" alt="USDT收款二维码"/><p>{{activePayment.network}}收款二维码 · 转账前请核对收款信息</p></section>
    <slot name="payment-details" :kind="kind" :locked="locked"/>
-   <section v-if="kind==='withdraw'&&user" class="wallet-wagering" aria-label="提现打码进度"><template v-if="account?.wagering"><div><span>打码额度</span><strong>{{money(account.wagering.required_cents)}} 元</strong></div><div><span>打码量</span><strong>{{money(account.wagering.turnover_cents)}} 元</strong></div></template><p v-else>正在读取打码进度，请刷新钱包重试。</p><p v-if="withdrawalError" class="wallet-error">{{withdrawalError}}</p></section>
+   <section v-if="kind==='withdraw'&&user" class="wallet-wagering" aria-label="提现打码进度"><template v-if="account?.wagering"><div><span>打码量</span><strong>{{money(account.wagering.required_cents)}} 元</strong></div><div><span>打码流水</span><strong>{{money(account.wagering.turnover_cents)}} 元</strong></div></template><p v-else>正在读取打码进度，请刷新钱包重试。</p><p v-if="withdrawalError" class="wallet-error">{{withdrawalError}}</p></section>
    <div v-if="kind==='withdraw'&&user" class="wallet-pin-heading"><span>{{needsPin?'提款前请先设置 6 位数字提现密码':'提现密码已设置'}}</span><button v-if="!needsPin" :disabled="locked" :aria-expanded="pinSetupOpen" @click="pinSetupOpen=!pinSetupOpen;pinSetupError=''">{{pinSetupOpen?'收起':'修改提现密码'}}</button></div>
    <form v-if="showPinSetup" class="wallet-pin-setup" @submit.prevent="saveWithdrawalPassword"><h2>{{needsPin?'设置提现密码':'修改提现密码'}}</h2><label v-if="!needsPin" class="wallet-field"><span>原提现密码</span><input v-model="currentPin" :disabled="locked" type="password" inputmode="numeric" required pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="off" placeholder="请输入原 6 位数字提现密码"/></label><label class="wallet-field"><span>提现密码</span><input v-model="newPin" :disabled="locked" type="password" inputmode="numeric" required pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="new-password" placeholder="请输入 6 位数字"/></label><label class="wallet-field"><span>确认提现密码</span><input v-model="confirmPin" :disabled="locked" type="password" inputmode="numeric" required pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="new-password" placeholder="请再次输入提现密码"/></label><p v-if="pinSetupError" class="wallet-error" role="alert">{{pinSetupError}}</p><button class="wallet-submit" :disabled="locked">{{pinSetupBusy?'保存中…':'保存提现密码'}}</button></form>
    <form v-if="!needsPin||pending" class="wallet-form" @submit.prevent="submit">
     <template v-if="isUsdt"><label class="wallet-field"><span>USDT 数量</span><input v-model="usdtAmount" :disabled="locked" inputmode="numeric" required maxlength="15" autocomplete="off" placeholder="请输入 USDT 数量"/></label><label class="wallet-field"><span>交易 ID<small>（必填）</small></span><input v-model="transactionId" :disabled="locked" required minlength="5" maxlength="5" pattern="[a-fA-F0-9]{5}" autocomplete="off" spellcheck="false" placeholder="请输入交易 ID 后5位"/></label><label class="wallet-field wallet-note-field"><span>转账备注<small>（选填）</small></span><textarea v-model="usdtNote" :disabled="locked" maxlength="500" rows="2" placeholder="请输入转账备注"/></label></template>
-    <template v-else><label class="wallet-field"><span>{{kindLabel}}金额<small>（元）</small></span><input v-model="draft.amount" :disabled="locked" inputmode="decimal" required maxlength="20" autocomplete="off" placeholder="请输入金额" aria-label="申请金额（元）"/></label><label v-if="kind==='deposit'" class="wallet-field"><span>交易 ID<small>（必填）</small></span><input v-model="manualTransactionId" :disabled="locked" required maxlength="128" autocomplete="off" spellcheck="false" placeholder="请输入存款交易 ID"/></label><template v-if="isUsdtWithdrawal"><label class="wallet-field"><span>收款网络</span><select v-model="payoutNetwork" :disabled="locked" aria-label="USDT提现收款网络"><option value="TRC20">TRC20</option><option value="ERC20">ERC20</option></select></label><label class="wallet-field"><span>USDT收款地址</span><input v-model="payoutAddress" :disabled="locked" required maxlength="128" autocomplete="off" spellcheck="false" placeholder="请输入所选网络的收款地址"/></label></template><label class="wallet-field wallet-note-field"><span>{{kind==='deposit'?'到账凭证或说明':'收款方式与说明'}}</span><textarea v-model="draft.note" :disabled="locked" required minlength="2" maxlength="500" rows="3" :placeholder="kind==='deposit'?'请填写供管理员核对的到账信息':'请填写收款方式、账号及核对说明'"/></label></template>
+    <template v-else><label class="wallet-field"><span>{{kindLabel}}金额<small>（元）</small></span><input v-model="draft.amount" :disabled="locked" inputmode="decimal" required maxlength="20" autocomplete="off" placeholder="请输入金额" aria-label="申请金额（元）"/></label><label v-if="kind==='deposit'" class="wallet-field"><span>交易 ID<small>（必填）</small></span><input v-model="manualTransactionId" :disabled="locked" required maxlength="128" autocomplete="off" spellcheck="false" placeholder="请输入存款交易 ID"/></label><WalletWithdrawalAddress v-if="isUsdtWithdrawal" v-model:network="payoutNetwork" v-model:address="payoutAddress" :locked="locked" @busy="addressSaving=$event" @notify="emit('notify',$event)"/><label class="wallet-field wallet-note-field"><span>{{kind==='deposit'?'到账凭证或说明':'收款方式与说明'}}</span><textarea v-model="draft.note" :disabled="locked" required minlength="2" maxlength="500" rows="3" :placeholder="kind==='deposit'?'请填写供管理员核对的到账信息':'请填写收款方式、账号及核对说明'"/></label></template>
     <label v-if="kind==='withdraw'" class="wallet-field"><span>提现密码</span><input v-model="withdrawalPassword" :disabled="locked" type="password" inputmode="numeric" required pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="off" placeholder="请输入 6 位数字提现密码"/></label>
     <label v-if="kind==='withdraw'" class="wallet-field"><span>确认提现密码</span><input v-model="withdrawalConfirmation" :disabled="locked" type="password" inputmode="numeric" required pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="off" placeholder="请再次输入提现密码"/></label>
     <section v-if="kind==='withdraw'&&activeWithdrawal" class="wallet-withdrawal-quote" aria-label="提现手续费与到账金额"><div><span>提现手续费（{{activeWithdrawal.fee_bps/100}}%）</span><strong>{{feePreview?money(feePreview.fee)+' 元':'—'}}</strong></div><div><span>实际到账</span><strong>{{feePreview?money(feePreview.net)+' 元':'—'}}</strong></div><template v-if="isUsdtWithdrawal"><div><span>USDT汇率</span><strong>1 U＝{{activeWithdrawal.rate_yuan}} 元</strong></div><div><span>预计到账USDT</span><strong>{{usdtPayoutPreview}} U</strong></div><p>手续费从申请金额内扣，USDT保留6位小数。</p></template></section>
     <p v-if="pendingNotice" class="wallet-pending" role="status">{{pendingNotice}}</p>
     <p v-if="error&&error!==pendingNotice" class="wallet-error" role="alert">{{error}}</p>
-    <button class="wallet-submit" :disabled="busy||pinSetupBusy||kind==='withdraw'&&!!user&&!pending&&(!wagerReady||!activeWithdrawal)" :type="user||pending?'submit':'button'" @click="!user&&!pending&&emit('login')">{{busy?'提交中…':pending?user?'重试确认':'登录并确认原申请':kind==='deposit'?'存款':!user?'登录后'+kindLabel:'提交'+kindLabel+'申请'}}</button>
+    <button class="wallet-submit" :disabled="busy||pinSetupBusy||addressSaving||!!user&&!pending&&(kind==='deposit'?!usdtAvailable:!wagerReady||!activeWithdrawal?.usdt_enabled)" :type="user||pending?'submit':'button'" @click="!user&&!pending&&emit('login')">{{busy?'提交中…':pending?user?'重试确认':'登录并确认原申请':kind==='deposit'?'存款':!user?'登录后'+kindLabel:'提交'+kindLabel+'申请'}}</button>
    </form>
-   <section class="wallet-instructions"><h2>操作说明</h2><p v-if="isUsdt">请使用页面显示的网络及收款地址完成转账，填写整数 USDT 数量和交易 ID 后5位（不必填写完整哈希）。提交后由管理员核对，审核通过后按本次申请保存的汇率计入余额。</p><p v-else-if="kind==='deposit'">填写存款金额、交易 ID 及到账凭证或说明，提交后由管理员核对。审核通过后计入可用余额。</p><p v-else>打码额度为充值金额加奖励，下注金额计入打码量，已撤销的下注不计入。打码达标或开通绿色通道后可申请提现；手续费从申请金额内扣。审核通过后重新累计，审核期间新增记录计入下一轮；驳回时退回完整申请金额。</p><p>申请进度和审核说明可在下方记录中查看。</p></section>
+   <section class="wallet-instructions"><h2>操作说明</h2><p v-if="isUsdt">请使用页面显示的网络及收款地址完成转账，填写整数 USDT 数量和交易 ID 后5位（不必填写完整哈希）。提交后由管理员核对，审核通过后按本次申请保存的汇率计入余额。</p><p v-else-if="kind==='deposit'">填写存款金额、交易 ID 及到账凭证或说明，提交后由管理员核对。审核通过后计入可用余额。</p><p v-else>打码量＝累计到账充值＋奖励，每次充值和奖励都会叠加；打码流水＝本轮累计投注金额（含后台流水调整），已撤销的下注不计入。打码流水≥打码量（相等也可）或开通绿色通道后可申请提现；手续费从申请金额内扣。提交申请时记录统计范围；审核通过仅将该范围内的打码量和打码流水归零，提交后的充值、奖励和投注继续累计到下一轮；驳回时退回完整申请金额。</p><p>申请进度和审核说明可在下方记录中查看。</p></section>
    <template v-if="user">
     <section class="wallet-record-section"><button class="wallet-record-toggle" :aria-expanded="requestsOpen" aria-controls="wallet-requests" @click="requestsOpen=!requestsOpen"><FileText :size="18"/><span>存款 / 提款记录<small>{{pendingCount?`${pendingCount} 笔待处理`:'最近 200 条'}}</small></span><ChevronDown :size="17" :class="{expanded:requestsOpen}"/></button><div v-if="requestsOpen" id="wallet-requests" class="wallet-requests"><article v-for="request in account?.requests" :key="request.id"><div><strong>{{walletLabel(request.kind)}}<b>{{money(request.amount_cents)}} 元</b></strong><small>{{datetime(request.created_at)}}</small><p v-if="request.payment_method==='usdt'&&!request.withdrawal" class="wallet-request-usdt">USDT {{request.usdt_amount}} · {{request.payment_network}} · 汇率 {{request.rate_yuan}}<span>交易 ID：{{request.transaction_id}}</span><span>收款地址：{{request.payment_address}}</span></p><p v-if="request.payment_method!=='usdt'&&request.transaction_id" class="wallet-request-usdt">交易 ID：{{request.transaction_id}}</p><PaymentRequestDetails v-if="request.withdrawal" :request="request"/><p>{{request.review_note||request.note}}</p></div><span class="badge" :class="request.status">{{labels[request.status]||request.status}}</span></article><p v-if="!account?.requests.length" class="wallet-empty">暂无申请记录</p></div></section>
 
@@ -213,5 +216,6 @@ onUnmounted(()=>{mounted=false;emit('busy',false)})
 </style>
 
 <style scoped>
+.wallet-payment-qr{display:flex;flex-direction:column;align-items:center;padding:18px;margin:0 0 20px;background:#fcfaff;border:1px solid #ece5f5;border-radius:7px}.wallet-payment-qr img{width:192px;height:192px;max-width:100%;object-fit:contain;padding:8px;background:#fff}.wallet-payment-qr p{font-size:11px;color:#95849f;line-height:1.8;text-align:center;margin:10px 0 0}
 .wallet-wagering,.wallet-withdrawal-quote{padding:14px 12px;margin:0 0 20px;background:#faf8ff;border:1px solid #ece5f5;border-radius:5px;font-size:12px;line-height:1.8}.wallet-wagering>div,.wallet-withdrawal-quote>div{display:flex;justify-content:space-between;gap:12px;margin:5px 0}.wallet-wagering strong,.wallet-withdrawal-quote strong{font-weight:500;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.wallet-wagering p,.wallet-withdrawal-quote p{font-size:11px;color:#aa7685;margin:5px 0}.wallet-wagering .eligible{color:#438d61}.wallet-field select{flex:1;min-width:0;padding:12px 5px;border:1px solid #e5e2eb;background:#fff;color:#544d61;font-size:13px}.wallet-withdrawal-quote{margin-top:18px}
 </style>

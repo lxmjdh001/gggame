@@ -5,6 +5,7 @@ import (
 	"errors"
 	bolt "go.etcd.io/bbolt"
 	"sort"
+	"starlight/gameapi/pkg/model"
 	"strings"
 	"time"
 )
@@ -23,19 +24,30 @@ type AgentNode struct {
 	DirectCount     int       `json:"direct_count"`
 	TeamCount       int       `json:"team_count"`
 	TeamDeposit     int64     `json:"team_deposit_cents"`
+	TodayStake      int64     `json:"today_stake_cents"`
+	TeamTodayStake  int64     `json:"team_today_stake_cents"`
 }
 type AgentPage struct {
-	Items    []AgentNode `json:"items"`
-	Parent   *AgentNode  `json:"parent,omitempty"`
-	Total    int         `json:"total"`
-	Page     int         `json:"page"`
-	PageSize int         `json:"page_size"`
+	Items      []AgentNode `json:"items"`
+	Parent     *AgentNode  `json:"parent,omitempty"`
+	Total      int         `json:"total"`
+	Page       int         `json:"page"`
+	PageSize   int         `json:"page_size"`
+	Day        string      `json:"day"`
+	TodayStake int64       `json:"today_stake_cents"`
 }
 
 // Read-only snapshot. Descendant totals use leaf-to-root aggregation, not a
 // depth-limited commission traversal; cycles fail explicitly rather than hang.
 func (s *Store) AgentTree(actor, username, parentID string, page int) (AgentPage, error) {
+	return s.agentTreeAt(actor, username, parentID, page, time.Now())
+}
+func (s *Store) agentTreeAt(actor, username, parentID string, page int, now time.Time) (AgentPage, error) {
 	out := AgentPage{Items: []AgentNode{}, PageSize: 20}
+	local := now.In(model.Beijing)
+	start := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, model.Beijing)
+	end := start.AddDate(0, 0, 1)
+	out.Day = start.Format("2006-01-02")
 	username = strings.TrimSpace(username)
 	parentID = strings.TrimSpace(parentID)
 	if page < 1 || page > 1000000 || len(username) > 32 || len(parentID) > 128 || (username != "" && parentID != "") {
@@ -74,6 +86,18 @@ func (s *Store) AgentTree(actor, username, parentID string, page int) (AgentPage
 			return err
 		}
 		children := map[string][]string{}
+		if err := tx.Bucket([]byte("orders")).ForEach(func(_, raw []byte) error {
+			var o Order
+			if e := json.Unmarshal(raw, &o); e != nil {
+				return e
+			}
+			if n := nodes[o.UserID]; n != nil && (o.Status == "pending" || o.Status == "settled") && !o.CreatedAt.Before(start) && o.CreatedAt.Before(end) {
+				n.TodayStake += o.Cost
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
 		roots := []string{}
 		pending := map[string]int{}
 		for id, n := range nodes {
@@ -98,6 +122,7 @@ func (s *Store) AgentTree(actor, username, parentID string, page int) (AgentPage
 			if p := nodes[n.InviterID]; p != nil {
 				p.TeamCount += n.TeamCount + 1
 				p.TeamDeposit += n.TeamDeposit + n.Deposit
+				p.TeamTodayStake += n.TeamTodayStake + n.TodayStake
 				pending[p.ID]--
 				if pending[p.ID] == 0 {
 					queue = append(queue, p.ID)
@@ -132,6 +157,9 @@ func (s *Store) AgentTree(actor, username, parentID string, page int) (AgentPage
 			return a.CreatedAt.Before(b.CreatedAt)
 		})
 		out.Total = len(ids)
+		for _, id := range ids {
+			out.TodayStake += nodes[id].TodayStake + nodes[id].TeamTodayStake
+		}
 		current, start, end := pageBounds(out.Total, page, out.PageSize)
 		out.Page = current
 		for _, id := range ids[start:end] {

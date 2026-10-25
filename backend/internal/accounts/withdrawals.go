@@ -62,7 +62,7 @@ type WagerEdit struct {
 }
 
 func initializeWithdrawals(tx *bolt.Tx) error {
-	for _, b := range []string{"withdrawal_settings", "wager_states", "wager_adjustments", "withdrawal_wagers", "wager_edits"} {
+	for _, b := range []string{"withdrawal_settings", "wager_states", "wager_adjustments", "withdrawal_wagers", "wager_edits", "withdrawal_addresses"} {
 		if _, err := tx.CreateBucketIfNotExists([]byte(b)); err != nil {
 			return err
 		}
@@ -274,6 +274,8 @@ func wagering(tx *bolt.Tx, id string, cutoff *wagerCutoff) (Wagering, error) {
 	out.Required = out.Deposit + out.Reward
 	out.Turnover = max(0, out.raw)
 	out.Remaining = max(0, out.Required-out.Turnover)
+	// 打码量 = Required (充值＋奖励); 打码流水 = Turnover (投注＋人工流水调整).
+	// Equality qualifies; approval consumes only the submission's saved cutoff.
 	out.Eligible = out.Green || out.Remaining == 0
 	return out, nil
 }
@@ -297,7 +299,7 @@ func (s *Store) Wagering(actor, id string) (Wagering, error) {
 func (s *Store) EditWagering(actor, id string, in WagerEdit) (Wagering, error) {
 	var out Wagering
 	if in.Turnover < 0 || in.Turnover > maxMoney || len(strings.TrimSpace(in.Note)) < 2 || len(in.Note) > 500 {
-		return out, errors.New("请填写有效打码量和调整原因")
+		return out, errors.New("请填写有效打码流水和调整原因")
 	}
 	body := struct {
 		ID   string
@@ -435,7 +437,7 @@ func (s *Store) submitWithdrawal(id string, in WalletSubmission) (WalletRequest,
 			return e
 		}
 		if !progress.Eligible {
-			return fmt.Errorf("打码量不足，还需投注%.2f元", float64(progress.Remaining)/100)
+			return fmt.Errorf("打码流水不足，还需投注%.2f元", float64(progress.Remaining)/100)
 		}
 		terms := &WithdrawalTerms{Version: cfg.Version, FeeBPS: cfg.FeeBPS, Fee: (in.Amount*cfg.FeeBPS + 5000) / 10000, RateVersion: cfg.RateVersion}
 		terms.Net = in.Amount - terms.Fee
@@ -507,7 +509,7 @@ func approveWithdrawalWager(tx *bolt.Tx, r WalletRequest) error {
 		return err
 	}
 	if !progress.Eligible {
-		return errors.New("申请覆盖的打码量已因撤销或调整不足，请先核实或驳回；绿色通道可豁免")
+		return errors.New("申请覆盖的打码流水已因撤销或调整不足，请先核实或驳回；绿色通道可豁免")
 	}
 	state, err := stateForWager(tx, r.UserID)
 	if err != nil {

@@ -514,10 +514,18 @@
             "minimum": 0,
             "maximum": 100000000,
             "description": "单笔最高折合人民币分，配置时不超过 100000000。 关闭且未配置限额时，与最低金额同时为 0；响应零值省略。"
+          },
+          "qr_code_data_url": {
+            "type": "string",
+            "description": "选填USDT收款二维码，只接受256KiB以内、64–2048像素的内嵌PNG/JPEG data URL；空值移除。修改网络或地址必须清除/更换旧图。"
+          },
+          "manual_qr_code_data_url": {
+            "type": "string",
+            "description": "旧人工二维码字段，仅保留后台存储兼容，当前会员页面/API不展示。"
           }
         },
         "additionalProperties": false,
-        "description": "独立于站点设置的 USDT 收款配置。初始只有 version=1、enabled=false，其余字段省略；关闭时允许保存空配置。管理员可读取保存的完整配置；普通用户在关闭或配置不完整时只获得 version 与 enabled=false，不返回收款地址。"
+        "description": "独立于站点设置的收款配置。初始只有 version=1、enabled=false；关闭时允许保存空配置。管理员可读取完整配置；会员仅提供USDT充值；关闭或配置不完整时不返回地址或二维码，旧人工二维码字段不向会员返回。"
       },
       "LegacyDepositInput": {
         "type": "object",
@@ -2572,7 +2580,7 @@
     "/api/v1/wallet/payment-settings": {
       "get": {
         "summary": "获取当前可用 USDT 收款配置",
-        "description": "需登录。默认关闭且无初始地址或汇率；关闭或配置不完整时仅返回 version 和 enabled=false。客户端不得在该状态展示可转账地址。响应禁止缓存。",
+        "description": "需登录。默认关闭且无初始地址或汇率；USDT关闭或配置不完整时返回version及enabled=false，不返回任何收款地址或二维码；旧人工二维码不向会员提供。响应禁止缓存。",
         "security": [
           {
             "SessionCookie": []
@@ -2672,7 +2680,7 @@
       },
       "put": {
         "summary": "管理员保存 USDT 收款配置",
-        "description": "提交当前 version，保存成功后返回 version+1 的完整配置并写入审计记录；版本过期返回 400。启用前必须填写网络、真实收款地址、汇率及有效限额。不会覆盖、重算或自动审核已存在的充值申请。",
+        "description": "提交当前version，成功后加1并审计，版本过期400。当前后台提供USDT的PNG/JPEG二维码，最多256KiB、64–2048像素；旧人工图片仅存储兼容；本接口正文最多768KiB。修改USDT网络/地址必须移除或更换旧二维码。启用前须填写完整配置，不覆盖、重算或自动审核既有充值申请。",
         "security": [
           {
             "SessionCookie": []
@@ -3651,10 +3659,99 @@
         }
       }
     },
+    "/api/v1/wallet/withdrawal-addresses": {
+      "get": {
+        "summary": "读取本人保存的TRC20/ERC20提现地址",
+        "description": "按当前登录用户隔离，每个网络返回version/network/address。未保存时version=0、address为空；不接受其他用户ID，不写浏览器持久存储。",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功，data返回本人保存地址。响应no-store。"
+          },
+          "400": {
+            "description": "地址、版本或网络无效"
+          },
+          "401": {
+            "description": "未登录"
+          },
+          "403": {
+            "description": "账号不可用或跨站请求"
+          }
+        }
+      }
+    },
+    "/api/v1/wallet/withdrawal-addresses/{network}": {
+      "put": {
+        "summary": "本人保存或更改提现地址",
+        "description": "首次version=0，修改须提交当前版本。同地址旧请求可安全重试；不同地址旧版本不能覆盖新记录。只保存偏好，不修改任何已提交提现的收款快照，不转账、不改余额或密码。",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "network",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "TRC20",
+                "ERC20"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "version",
+                  "address"
+                ],
+                "properties": {
+                  "version": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "address": {
+                    "type": "string",
+                    "maxLength": 128
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功，data返回本人保存地址。响应no-store。"
+          },
+          "400": {
+            "description": "地址、版本或网络无效"
+          },
+          "401": {
+            "description": "未登录"
+          },
+          "403": {
+            "description": "账号不可用或跨站请求"
+          }
+        }
+      }
+    },
     "/api/v1/wallet/withdrawal-settings": {
       "get": {
         "summary": "会员读取提现手续费及共用USDT汇率",
-        "description": "需有效会话，admin路径仅管理员。打码额度为周期内已到账充值与奖励，打码量为未撤销下注加后台调整；提现审核通过后消费该申请覆盖范围，审核期间新增记录保留；绿色通道只豁免打码限制。",
+        "description": "需有效会话，admin路径仅管理员。打码量（required_cents）为周期内累计到账充值与奖励，每次到账叠加；打码流水（turnover_cents）为未撤销累计投注金额加后台流水调整，管理员只能调整打码流水与绿色通道，不能手动修改打码量；打码流水≥打码量即可申请提现，相等也允许；提交时保存统计范围，审核通过仅将该范围内的两项清零，提交后的充值、奖励、投注及后台流水调整继续累积到下一轮，提交和驳回不清零；绿色通道只豁免打码限制。",
         "responses": {
           "200": {
             "description": "data返回配置或打码结果"
@@ -3674,7 +3771,7 @@
     "/api/v1/admin/withdrawal-settings": {
       "get": {
         "summary": "管理员读取提现配置",
-        "description": "需有效会话，admin路径仅管理员。打码额度为周期内已到账充值与奖励，打码量为未撤销下注加后台调整；提现审核通过后消费该申请覆盖范围，审核期间新增记录保留；绿色通道只豁免打码限制。",
+        "description": "需有效会话，admin路径仅管理员。打码量（required_cents）为周期内累计到账充值与奖励，每次到账叠加；打码流水（turnover_cents）为未撤销累计投注金额加后台流水调整，管理员只能调整打码流水与绿色通道，不能手动修改打码量；打码流水≥打码量即可申请提现，相等也允许；提交时保存统计范围，审核通过仅将该范围内的两项清零，提交后的充值、奖励、投注及后台流水调整继续累积到下一轮，提交和驳回不清零；绿色通道只豁免打码限制。",
         "responses": {
           "200": {
             "description": "data返回配置或打码结果"
@@ -3692,7 +3789,7 @@
       },
       "put": {
         "summary": "管理员按version及rate_version并发校验保存手续费、USDT启停及共用汇率，仅影响新申请",
-        "description": "需有效会话，admin路径仅管理员。打码额度为周期内已到账充值与奖励，打码量为未撤销下注加后台调整；提现审核通过后消费该申请覆盖范围，审核期间新增记录保留；绿色通道只豁免打码限制。",
+        "description": "需有效会话，admin路径仅管理员。打码量（required_cents）为周期内累计到账充值与奖励，每次到账叠加；打码流水（turnover_cents）为未撤销累计投注金额加后台流水调整，管理员只能调整打码流水与绿色通道，不能手动修改打码量；打码流水≥打码量即可申请提现，相等也允许；提交时保存统计范围，审核通过仅将该范围内的两项清零，提交后的充值、奖励、投注及后台流水调整继续累积到下一轮，提交和驳回不清零；绿色通道只豁免打码限制。",
         "responses": {
           "200": {
             "description": "data返回配置或打码结果"
@@ -3712,7 +3809,7 @@
     "/api/v1/admin/users/{id}/wagering": {
       "get": {
         "summary": "管理员查看会员当前周期打码",
-        "description": "需有效会话，admin路径仅管理员。打码额度为周期内已到账充值与奖励，打码量为未撤销下注加后台调整；提现审核通过后消费该申请覆盖范围，审核期间新增记录保留；绿色通道只豁免打码限制。",
+        "description": "需有效会话，admin路径仅管理员。打码量（required_cents）为周期内累计到账充值与奖励，每次到账叠加；打码流水（turnover_cents）为未撤销累计投注金额加后台流水调整，管理员只能调整打码流水与绿色通道，不能手动修改打码量；打码流水≥打码量即可申请提现，相等也允许；提交时保存统计范围，审核通过仅将该范围内的两项清零，提交后的充值、奖励、投注及后台流水调整继续累积到下一轮，提交和驳回不清零；绿色通道只豁免打码限制。",
         "responses": {
           "200": {
             "description": "data返回配置或打码结果"
@@ -3729,8 +3826,8 @@
         }
       },
       "post": {
-        "summary": "管理员按version/revision调整打码量和绿色通道，需原因与幂等key，留操作日志，不改余额",
-        "description": "需有效会话，admin路径仅管理员。打码额度为周期内已到账充值与奖励，打码量为未撤销下注加后台调整；提现审核通过后消费该申请覆盖范围，审核期间新增记录保留；绿色通道只豁免打码限制。",
+        "summary": "管理员按version/revision调整打码流水和绿色通道，需原因与幂等key，留操作日志，不改余额",
+        "description": "需有效会话，admin路径仅管理员。打码量（required_cents）为周期内累计到账充值与奖励，每次到账叠加；打码流水（turnover_cents）为未撤销累计投注金额加后台流水调整，管理员只能调整打码流水与绿色通道，不能手动修改打码量；打码流水≥打码量即可申请提现，相等也允许；提交时保存统计范围，审核通过仅将该范围内的两项清零，提交后的充值、奖励、投注及后台流水调整继续累积到下一轮，提交和驳回不清零；绿色通道只豁免打码限制。",
         "responses": {
           "200": {
             "description": "data返回配置或打码结果"
@@ -3743,6 +3840,179 @@
           },
           "403": {
             "description": "权限不足或停用"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/users/{id}/inviter": {
+      "get": {
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功，data为当前或预览关系，含username、inviter_id/username、new_inviter_id/username、descendants和revision；no-store"
+          },
+          "400": {
+            "description": "参数/版本冲突或邀请关系循环"
+          },
+          "401": {
+            "description": "未登录"
+          },
+          "403": {
+            "description": "非管理员或账号不可用"
+          }
+        },
+        "summary": "管理员读取会员上级与分支人数"
+      },
+      "post": {
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功，data为当前或预览关系，含username、inviter_id/username、new_inviter_id/username、descendants和revision；no-store"
+          },
+          "400": {
+            "description": "参数/版本冲突或邀请关系循环"
+          },
+          "401": {
+            "description": "未登录"
+          },
+          "403": {
+            "description": "非管理员或账号不可用"
+          }
+        },
+        "summary": "管理员确认更改会员上级",
+        "description": "必须先预览，再提交全关系revision、原候选、原因及幂等key。迁移整支下级，禁止自指/指向下级/停用上级，不改历史订单佣金快照或资金。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "inviter_username": {
+                    "type": "string",
+                    "maxLength": 32
+                  },
+                  "detach": {
+                    "type": "boolean"
+                  },
+                  "revision": {
+                    "type": "string"
+                  },
+                  "note": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 500
+                  },
+                  "key": {
+                    "type": "string",
+                    "minLength": 16,
+                    "maxLength": 100
+                  }
+                },
+                "required": [
+                  "revision",
+                  "note",
+                  "key"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/users/{id}/inviter/preview": {
+      "post": {
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功，data为当前或预览关系，含username、inviter_id/username、new_inviter_id/username、descendants和revision；no-store"
+          },
+          "400": {
+            "description": "参数/版本冲突或邀请关系循环"
+          },
+          "401": {
+            "description": "未登录"
+          },
+          "403": {
+            "description": "非管理员或账号不可用"
+          }
+        },
+        "summary": "管理员预览更改上级（不落库）",
+        "description": "输入完整inviter_username，或detach=true明确设为无上级。返回候选与全关系revision，仅管理员。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "inviter_username": {
+                    "type": "string",
+                    "maxLength": 32
+                  },
+                  "detach": {
+                    "type": "boolean"
+                  },
+                  "revision": {
+                    "type": "string"
+                  },
+                  "note": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 500
+                  },
+                  "key": {
+                    "type": "string",
+                    "minLength": 16,
+                    "maxLength": 100
+                  }
+                }
+              }
+            }
           }
         }
       }

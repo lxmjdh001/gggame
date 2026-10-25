@@ -58,10 +58,13 @@ func result(w http.ResponseWriter, v any, err error) {
 	response(w, 200, map[string]any{"data": v})
 }
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
+	return decodeLimit(w, r, v, 131072)
+}
+func decodeLimit(w http.ResponseWriter, r *http.Request, v any, limit int64) error {
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		return errors.New("请使用JSON请求")
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 131072)
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
 	if err := d.Decode(v); err != nil {
@@ -425,6 +428,19 @@ func (h *HTTP) Bind(mux *http.ServeMux) {
 		v, e := h.Store.WithdrawalSettings(u.ID, false)
 		result(w, v, e)
 	}))
+	mux.HandleFunc("GET /api/v1/wallet/withdrawal-addresses", auth(false, func(w http.ResponseWriter, r *http.Request, u User) {
+		v, e := h.Store.WithdrawalAddresses(u.ID)
+		result(w, v, e)
+	}))
+	mux.HandleFunc("PUT /api/v1/wallet/withdrawal-addresses/{network}", auth(false, func(w http.ResponseWriter, r *http.Request, u User) {
+		var in WithdrawalAddress
+		if e := decode(w, r, &in); e != nil {
+			result(w, nil, e)
+			return
+		}
+		v, e := h.Store.SaveWithdrawalAddress(u.ID, r.PathValue("network"), in)
+		result(w, v, e)
+	}))
 	mux.HandleFunc("GET /api/v1/admin/withdrawal-settings", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
 		v, e := h.Store.WithdrawalSettings(u.ID, true)
 		result(w, v, e)
@@ -457,7 +473,7 @@ func (h *HTTP) Bind(mux *http.ServeMux) {
 			result(w, nil, e)
 			return
 		}
-		v, e := h.Store.SubmitWalletRequest(u.ID, in)
+		v, e := h.Store.SubmitUSDTWalletRequest(u.ID, in)
 		result(w, v, e)
 	}))
 	mux.HandleFunc("GET /api/v1/wallet/payment-settings", auth(false, func(w http.ResponseWriter, r *http.Request, u User) {
@@ -470,7 +486,7 @@ func (h *HTTP) Bind(mux *http.ServeMux) {
 	}))
 	mux.HandleFunc("PUT /api/v1/admin/payment-settings", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
 		var in PaymentSettings
-		if e := decode(w, r, &in); e != nil {
+		if e := decodeLimit(w, r, &in, 786432); e != nil {
 			result(w, nil, e)
 			return
 		}
@@ -524,6 +540,28 @@ func (h *HTTP) Bind(mux *http.ServeMux) {
 	}))
 	mux.HandleFunc("GET /api/v1/admin/users/{id}/password", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
 		v, e := h.Store.MemberPasswordState(u.ID, r.PathValue("id"))
+		result(w, v, e)
+	}))
+	mux.HandleFunc("GET /api/v1/admin/users/{id}/inviter", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		v, e := h.Store.MemberInviter(u.ID, r.PathValue("id"))
+		result(w, v, e)
+	}))
+	mux.HandleFunc("POST /api/v1/admin/users/{id}/inviter/preview", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		var in MemberInviterInput
+		if e := decode(w, r, &in); e != nil {
+			result(w, nil, e)
+			return
+		}
+		v, e := h.Store.PreviewMemberInviter(u.ID, r.PathValue("id"), in)
+		result(w, v, e)
+	}))
+	mux.HandleFunc("POST /api/v1/admin/users/{id}/inviter", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		var in MemberInviterInput
+		if e := decode(w, r, &in); e != nil {
+			result(w, nil, e)
+			return
+		}
+		v, e := h.Store.ChangeMemberInviter(u.ID, r.PathValue("id"), in)
 		result(w, v, e)
 	}))
 	mux.HandleFunc("POST /api/v1/admin/users/{id}/password", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {

@@ -15,13 +15,15 @@ import (
 // Payment settings are deliberately independent of general site settings. A
 // stale general-settings form cannot overwrite a receiving address or rate.
 type PaymentSettings struct {
-	Version        int64  `json:"version"`
-	Enabled        bool   `json:"enabled"`
-	Network        string `json:"network,omitempty"`
-	Address        string `json:"address,omitempty"`
-	RateYuan       string `json:"rate_yuan,omitempty"`
-	MinAmountCents int64  `json:"min_amount_cents,omitempty"`
-	MaxAmountCents int64  `json:"max_amount_cents,omitempty"`
+	Version             int64  `json:"version"`
+	Enabled             bool   `json:"enabled"`
+	Network             string `json:"network,omitempty"`
+	Address             string `json:"address,omitempty"`
+	RateYuan            string `json:"rate_yuan,omitempty"`
+	MinAmountCents      int64  `json:"min_amount_cents,omitempty"`
+	MaxAmountCents      int64  `json:"max_amount_cents,omitempty"`
+	QRCodeDataURL       string `json:"qr_code_data_url,omitempty"`
+	ManualQRCodeDataURL string `json:"manual_qr_code_data_url,omitempty"`
 }
 
 // Keep RequestInput unchanged: its JSON is also the digest for historical
@@ -83,6 +85,12 @@ func usdtRateMicros(rate string) (int64, error) {
 }
 
 func validatePaymentSettings(cfg PaymentSettings) error {
+	if err := validatePaymentQR(cfg.QRCodeDataURL); err != nil {
+		return err
+	}
+	if err := validatePaymentQR(cfg.ManualQRCodeDataURL); err != nil {
+		return err
+	}
 	if cfg.Version < 1 {
 		return errors.New("请刷新收款设置后重试")
 	}
@@ -135,6 +143,7 @@ func (s *Store) DepositPaymentSettings(id string) (PaymentSettings, error) {
 		// Disabled or incomplete settings never expose a transferable address.
 		if cfg.Enabled && validatePaymentSettings(cfg) == nil {
 			out = cfg
+			out.ManualQRCodeDataURL = "" // Legacy manual configuration is not offered by the USDT-only wallet.
 		}
 		return nil
 	})
@@ -160,6 +169,9 @@ func (s *Store) SavePaymentSettings(actor string, cfg PaymentSettings) (PaymentS
 		if old.Version != cfg.Version {
 			return errors.New("收款设置已更新，请刷新后重新保存")
 		}
+		if (old.Network != cfg.Network || old.Address != cfg.Address) && old.QRCodeDataURL != "" && old.QRCodeDataURL == cfg.QRCodeDataURL {
+			return errors.New("更改收款地址或网络后，请重新上传对应二维码或移除旧二维码")
+		}
 		cfg.Version++
 		if cfg.Version <= old.Version {
 			return errors.New("收款设置版本已达上限")
@@ -167,7 +179,7 @@ func (s *Store) SavePaymentSettings(actor string, cfg PaymentSettings) (PaymentS
 		if err = put(tx, "payment_settings", "usdt", cfg); err != nil {
 			return err
 		}
-		detail, err := json.Marshal(map[string]any{"before": old, "after": cfg})
+		detail, err := json.Marshal(map[string]any{"before": paymentSettingsForAudit(old), "after": paymentSettingsForAudit(cfg)})
 		if err != nil {
 			return err
 		}
@@ -237,6 +249,39 @@ func usdtRequestTransactionKey(network, transactionID, requestID string) string 
 
 func usdtTransactionKey(network, transactionID string) string {
 	return network + ":" + strings.TrimPrefix(strings.ToLower(transactionID), "0x")
+}
+
+// The public wallet accepts only new USDT requests. Previously accepted manual
+// requests remain reviewable and exact retries still resolve their original ID.
+func (s *Store) SubmitUSDTWalletRequest(id string, in WalletSubmission) (WalletRequest, error) {
+	if in.PaymentMethod == "usdt" {
+		return s.SubmitWalletRequest(id, in)
+	}
+	var accepted bool
+	err := s.db.View(func(tx *bolt.Tx) error {
+		if _, e := active(tx, id); e != nil {
+			return e
+		}
+		ref, e := idem(tx, "request:"+id, in.Key, in.RequestInput)
+		if e != nil {
+			return e
+		}
+		if ref != "" {
+			r, e := get[WalletRequest](tx, "requests", ref)
+			if e != nil {
+				return e
+			}
+			accepted = r.UserID == id && r.PaymentMethod == ""
+		}
+		return nil
+	})
+	if err != nil {
+		return WalletRequest{}, err
+	}
+	if !accepted {
+		return WalletRequest{}, errors.New("充值和提现仅支持USDT，请刷新页面后选择USDT账户")
+	}
+	return s.SubmitWalletRequest(id, in)
 }
 
 func (s *Store) SubmitWalletRequest(id string, in WalletSubmission) (WalletRequest, error) {

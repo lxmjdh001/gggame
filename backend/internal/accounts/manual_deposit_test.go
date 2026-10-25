@@ -105,6 +105,11 @@ func TestManualDepositTransactionIDHTTP(t *testing.T) {
 		status    int
 	}{{"", token, 400}, {"bank-ref-20261020", token, 200}, {"bank-ref-20261020", "", 401}} {
 		input := WalletSubmission{RequestInput: RequestInput{Kind: "deposit", Amount: 100, Note: "付款凭证", Key: randomID()}, TransactionID: tc.id}
+		// New manual deposits are retired; old accepted requests remain safely retryable.
+		if tc.status == 200 {
+			_, err := s.SubmitWalletRequest("member", input)
+			must(t, err)
+		}
 		body, err := json.Marshal(input)
 		must(t, err)
 		r := httptest.NewRequest("POST", "http://localhost/api/v1/wallet/requests", bytes.NewReader(body))
