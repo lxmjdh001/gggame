@@ -8,9 +8,9 @@ import {ref,computed,watch,nextTick} from 'vue'
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8')
 
 test('member and admin labels consistently distinguish the required amount from betting turnover',()=>{
- const wallet=read('src/components/WalletPanel.vue'),editor=read('src/components/AdminWagerEditor.vue'),settings=read('src/components/AdminWithdrawalSettings.vue')
- assert.match(wallet,/<span>打码量<\/span><strong>\{\{money\(account.wagering.required_cents\)/)
- assert.match(wallet,/<span>打码流水<\/span><strong>\{\{money\(account.wagering.turnover_cents\)/)
+ const wallet=read('src/components/WalletWithdrawalForm.vue'),editor=read('src/components/AdminWagerEditor.vue'),settings=read('src/components/AdminWithdrawalSettings.vue')
+ assert.match(wallet,/<span>提款所需打码量<\/span><strong>\{\{money\(wager.required_cents\)/)
+ assert.match(wallet,/<span>已达打码流水<\/span><strong>\{\{money\(wager.turnover_cents\)/)
  assert.match(editor,/<p>打码量 <strong>\{\{money\(progress.required_cents\)/)
  assert.match(editor,/当前打码流水 \{\{money\(progress.turnover_cents\)/)
  assert.match(editor,/<label>调整后打码流水（元）/)

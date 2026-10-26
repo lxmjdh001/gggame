@@ -48,7 +48,10 @@ test('personal and administrative new-password fields use 8–16',()=>{
 })
 test('withdrawal password remains six digits',()=>{
  bounds('AuthDialog.vue','withdrawalPassword',6,6)
- for(const model of ['newPin','confirmPin','withdrawalPassword','withdrawalConfirmation'])bounds('WalletPanel.vue',model,6,6)
+ for(const model of ['newPin','confirmPin'])bounds('WalletPanel.vue',model,6,6)
+ const form=read('src/components/WalletWithdrawalForm.vue')
+ assert.match(form,/pattern="\[0-9\]\{6\}" minlength="6" maxlength="6"/)
+ assert.match(read('src/components/WalletPanel.vue'),/withdrawalConfirmation.value=value/)
 })
 test('published API schema documents the new registration/reset bounds',()=>{
  const api=JSON.parse(read('backend/docs/openapi.json'))

@@ -425,6 +425,10 @@ func (h *HTTP) Bind(mux *http.ServeMux) {
 		v, err := h.Store.OrdersPageRange(u.ID, page, query.Get("status"), query.Get("start_date"), query.Get("end_date"))
 		result(w, v, err)
 	}))
+	mux.HandleFunc("GET /api/v1/wallet/requests/{id}/detail", auth(false, func(w http.ResponseWriter, r *http.Request, u User) {
+		v, e := h.Store.WithdrawalDetail(u.ID, r.PathValue("id"))
+		result(w, v, e)
+	}))
 	mux.HandleFunc("GET /api/v1/wallet/withdrawal-settings", auth(false, func(w http.ResponseWriter, r *http.Request, u User) {
 		v, e := h.Store.WithdrawalSettings(u.ID, false)
 		result(w, v, e)

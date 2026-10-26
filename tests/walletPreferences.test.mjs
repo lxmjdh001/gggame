@@ -92,7 +92,7 @@ test('QR editor only reads bounded raster files and ignores replies after unmoun
 
 test('wallet integrates saved addresses and only USDT QR display without browser storage',()=>{
  const wallet=read('src/components/WalletPanel.vue'),admin=read('src/components/AdminPaymentSettings.vue'),address=read('src/components/WalletWithdrawalAddress.vue')
- assert.match(wallet,/<WalletWithdrawalAddress v-if="isWithdrawal"/);assert.match(wallet,/addressSaving/)
+ assert.match(wallet,/<WalletWithdrawalForm v-if="kind==='withdraw'/);assert.match(read('src/components/WalletWithdrawalForm.vue'),/<WalletWithdrawalAddress/);assert.match(wallet,/addressSaving/)
  assert.match(wallet,/activePayment\?\.qr_code_data_url/);assert.doesNotMatch(wallet,/人工存款|人工提款/)
  assert.doesNotMatch(address,/localStorage|sessionStorage/)
  assert.doesNotMatch(admin,/label="人工存款二维码"/);assert.match(admin,/label="USDT充值二维码"/)

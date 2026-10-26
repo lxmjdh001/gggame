@@ -2,6 +2,7 @@
 import {ref,computed,onMounted,watch} from 'vue'
 import InviteFriends from './InviteFriends.vue'
 import MyTeam from './MyTeam.vue'
+import WithdrawalReceipt from './WithdrawalReceipt.vue'
 import AccountRecords from './AccountRecords.vue'
 import MyOrders from './MyOrders.vue'
 import WalletPanel from './WalletPanel.vue'
@@ -10,7 +11,8 @@ import {Wallet,Users,Gift,FileText,ShieldCheck,ArrowUpRight,LogOut,RefreshCw,Loc
 import {user,account,api,refreshAccount,money} from '../api/account'
 import {validNewPasswordLength} from '../lib/passwordPolicy'
 const props=defineProps<{page:string;walletMode:'deposit'|'withdraw'}>();const emit=defineEmits<{login:[];navigate:[page:string];notify:[message:string];logout:[];wallet:[mode:'deposit'|'withdraw'];busy:[busy:boolean]}>()
-const passwordOpen=ref(false),secondaryOpen=ref(false)
+const passwordOpen=ref(false),secondaryOpen=ref(false),detailId=ref('')
+watch(()=>user.value?.id,()=>{detailId.value=''},{flush:'sync'})
 const busy=ref(false),error=ref(''),oldPassword=ref(''),newPassword=ref(''),confirmPassword=ref('')
 const title=computed(()=>({wallet:'我的钱包',commissions:'邀请好友',team:'我的团队',records:'投注记录',ledger:'账变记录',transactions:'交易记录',daily:'每日输赢',profile:'个人中心'}[props.page]??'个人中心'))
 async function refresh(){try{await refreshAccount();error.value=''}catch(e){error.value=(e as Error).message}}
@@ -18,7 +20,7 @@ onMounted(()=>{if(props.page!=='wallet')void refresh()});watch(()=>props.page,()
 async function action(fn:()=>Promise<void>){if(busy.value)return;busy.value=true;error.value='';try{await fn()}catch(e){error.value=(e as Error).message}finally{busy.value=false}}
 async function changePassword(){await action(async()=>{if(!validNewPasswordLength(newPassword.value))throw new Error('新密码需8–16位');if(newPassword.value!==confirmPassword.value)throw new Error('两次新密码不一致');await api('/auth/password','POST',{old_password:oldPassword.value,new_password:newPassword.value});user.value=null;account.value=null;emit('notify','密码已更新，请重新登录');emit('login')})}
 </script>
-<template><div class="account-page" :class="{'reference-profile':page==='profile','reference-wallet':page==='wallet','reference-invite':page==='commissions'||page==='team','reference-orders':page==='records'}"><WalletPanel v-if="page==='wallet'" :mode="walletMode" @back="emit('navigate','profile')" @login="emit('login')" @notify="emit('notify',$event)" @busy="emit('busy',$event)"/><MyOrders v-else-if="page==='records'" @back="emit('navigate','profile')" @login="emit('login')"/><template v-else><header v-if="page==='profile'" class="profile-header"><span>我的</span><button aria-label="修改登陆密码" :aria-expanded="passwordOpen" @click="passwordOpen=!passwordOpen"><Settings :size="21"/></button></header><div v-if="page!=='profile'" class="page-heading"><div><p v-if="page!=='commissions'" class="section-eyebrow">JS · MY ACCOUNT</p><h1>{{title}}</h1><p v-if="page!=='commissions'">账户、余额与记录，集中管理。</p></div><button v-if="user" class="secondary-button" @click="refresh"><RefreshCw :size="16"/>刷新</button></div>
+<template><WithdrawalReceipt v-if="detailId" :request-id="detailId" @back="detailId=''"/><div v-else class="account-page" :class="{'reference-profile':page==='profile','reference-wallet':page==='wallet','reference-invite':page==='commissions'||page==='team','reference-orders':page==='records'}"><WalletPanel v-if="page==='wallet'" :mode="walletMode" @back="emit('navigate','profile')" @login="emit('login')" @notify="emit('notify',$event)" @busy="emit('busy',$event)"/><MyOrders v-else-if="page==='records'" @back="emit('navigate','profile')" @login="emit('login')"/><template v-else><header v-if="page==='profile'" class="profile-header"><span>我的</span><button aria-label="修改登陆密码" :aria-expanded="passwordOpen" @click="passwordOpen=!passwordOpen"><Settings :size="21"/></button></header><div v-if="page!=='profile'" class="page-heading"><div><p v-if="page!=='commissions'" class="section-eyebrow">JS · MY ACCOUNT</p><h1>{{title}}</h1><p v-if="page!=='commissions'">账户、余额与记录，集中管理。</p></div><button v-if="user" class="secondary-button" @click="refresh"><RefreshCw :size="16"/>刷新</button></div>
  <div v-if="!user" class="account-empty"><div class="auth-brand"><LockKeyhole :size="30"/></div><h2>登录你的金沙账户</h2><p>登录后查看余额、订单和邀请好友。</p><button class="primary-button" @click="emit('login')">登录 / 注册 <ArrowUpRight :size="17"/></button></div>
  <template v-else><div v-if="page!=='profile'" class="account-tabs"><button v-for="t in [{id:'profile',name:'账户',icon:ShieldCheck},{id:'wallet',name:'钱包',icon:Wallet},{id:'records',name:'订单',icon:FileText},{id:'commissions',name:'邀请好友',icon:Users}]" :class="{active:page===t.id}" @click="emit('navigate',t.id)"><component :is="t.icon" :size="17"/>{{t.name}}</button></div><div v-if="error" class="form-error" role="alert">{{error}}</div>
  <template v-if="page==='profile'">
@@ -30,7 +32,7 @@ async function changePassword(){await action(async()=>{if(!validNewPasswordLengt
  </template>
  <MyTeam v-else-if="page==='team'"/>
  <InviteFriends v-else-if="page==='commissions'" @notify="emit('notify',$event)"/>
- <AccountRecords v-else-if="page==='ledger'||page==='transactions'||page==='daily'" :kind="page" :key="page"/>
+ <AccountRecords v-else-if="page==='ledger'||page==='transactions'||page==='daily'" :kind="page" :key="page" @detail="detailId=$event"/>
  </template></template></div></template>
 
 <style scoped>

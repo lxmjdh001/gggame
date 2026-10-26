@@ -11,6 +11,31 @@
   ],
   "components": {
     "schemas": {
+      "WithdrawalDetail": {
+        "type": "object",
+        "required": [
+          "request",
+          "balance_before_cents",
+          "balance_after_cents"
+        ],
+        "properties": {
+          "request": {
+            "$ref": "#/components/schemas/WalletRequest"
+          },
+          "balance_before_cents": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true,
+            "description": "提款提交时冻结记录对应的原可用余额，旧记录缺失时为null"
+          },
+          "balance_after_cents": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true,
+            "description": "同一冻结记录的变动后可用余额，不能用当前余额推算"
+          }
+        }
+      },
       "Session": {
         "type": "object",
         "properties": {
@@ -1741,6 +1766,51 @@
     }
   },
   "paths": {
+    "/api/v1/wallet/requests/{id}/detail": {
+      "get": {
+        "tags": [
+          "账户"
+        ],
+        "summary": "本人的提款账变详情",
+        "description": "只读且no-store，仅本人可见。返回原申请及提交时withdraw_hold账变的前后余额，后续交易和审核不改变原账变；缺失的历史数据为null，不补写数据。",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "提款详情",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/WithdrawalDetail"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未登录"
+          },
+          "403": {
+            "description": "账户不可用"
+          },
+          "404": {
+            "description": "不存在、非本人的申请或非提款申请"
+          }
+        }
+      }
+    },
     "/api/v1/admin/users/{id}/deletion": {
       "get": {
         "summary":"管理员预览删除或恢复会员",
