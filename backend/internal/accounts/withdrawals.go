@@ -438,7 +438,7 @@ func withdrawalReplay(tx *bolt.Tx, id string, in WalletSubmission) (WalletReques
 }
 func (s *Store) submitWithdrawal(id string, in WalletSubmission) (WalletRequest, error) {
 	var out WalletRequest
-	if in.USDTAmount != "" || in.TransactionID != "" || in.SettingsVersion != 0 || (in.PaymentMethod != "" && in.PaymentMethod != "usdt") {
+	if in.USDTAmount != "" || in.TransactionID != "" || in.SettingsVersion != 0 || (in.PaymentMethod != "" && in.PaymentMethod != "usdt" && !walletWithdrawalMethod(in.PaymentMethod)) {
 		return out, errors.New("提现参数不正确")
 	}
 	// Accepted retries are independent of current PIN, policy or rate changes.
@@ -490,15 +490,15 @@ func (s *Store) submitWithdrawal(id string, in WalletSubmission) (WalletRequest,
 		if terms.Net <= 0 {
 			return errors.New("扣除手续费后的到账金额须大于零")
 		}
-		if in.PaymentMethod == "usdt" {
+		if in.PaymentMethod == "usdt" || walletWithdrawalMethod(in.PaymentMethod) {
 			if !cfg.USDTEnabled {
-				return errors.New("USDT提现暂未开放")
+				return errors.New("提现通道暂未开放")
 			}
 			terms.Network = in.PayoutNetwork
 			terms.Address = strings.TrimSpace(in.PayoutAddress)
 			terms.RateYuan = cfg.RateYuan
-			if !((terms.Network == "TRC20" && tronAddressPattern.MatchString(terms.Address)) || (terms.Network == "ERC20" && ethAddressPattern.MatchString(terms.Address))) {
-				return errors.New("请填写与TRC20或ERC20网络匹配的完整USDT收款地址")
+			if !validWithdrawalDestination(in.PaymentMethod, terms.Network, terms.Address) {
+				return errors.New("收款账户类型与账号不匹配，请核对；USDT须填写所选网络的完整地址")
 			}
 			terms.USDTAmount, e = usdtPayout(terms.Net, cfg.RateYuan)
 			if e != nil {
@@ -530,11 +530,13 @@ func validateWithdrawalTerms(r WalletRequest) error {
 	if r.Kind != "withdraw" || t.Version < 1 || t.FeeBPS < 0 || t.FeeBPS > 9999 || t.Fee != (r.Amount*t.FeeBPS+5000)/10000 || t.Net != r.Amount-t.Fee || t.Net <= 0 {
 		return errors.New("提现费用快照异常，请核实")
 	}
-	if r.PaymentMethod == "usdt" {
+	if r.PaymentMethod == "usdt" || walletWithdrawalMethod(r.PaymentMethod) {
 		amount, e := usdtPayout(t.Net, t.RateYuan)
-		if e != nil || amount != t.USDTAmount || !((t.Network == "TRC20" && tronAddressPattern.MatchString(t.Address)) || (t.Network == "ERC20" && ethAddressPattern.MatchString(t.Address))) {
-			return errors.New("USDT提现快照异常，请核实")
+		if e != nil || amount != t.USDTAmount || !validWithdrawalDestination(r.PaymentMethod, t.Network, t.Address) {
+			return errors.New("提现收款快照异常，请核实")
 		}
+	} else if r.PaymentMethod != "" {
+		return errors.New("提现账户类型异常，请核实")
 	}
 	return nil
 }

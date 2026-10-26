@@ -51,7 +51,7 @@ function trapFocus(event: KeyboardEvent) { if (event.key !== 'Tab') return; cons
     <aside class="sidebar">
       <a href="#" class="brand" @click.prevent="navigate('home')"><img class="js-brand-logo" src="/js-logo.jpg" alt="JS 金沙"/></a>
       <div class="sidebar-caption">发现你的精彩</div>
-      <nav class="side-nav"><button v-for="item in nav" :key="item.id" :class="{ active: page === item.id }" @click="navigate(item.id)"><component :is="item.icon" :size="20"/>{{ item.label }}<ChevronRight v-if="page === item.id" :size="15" class="nav-arrow"/></button></nav>
+      <nav class="side-nav"><button v-for="item in nav" :key="item.id" :class="{ active: page === item.id || page === 'team' && item.id === 'profile' }" @click="navigate(item.id)"><component :is="item.icon" :size="20"/>{{ item.label }}<ChevronRight v-if="page === item.id" :size="15" class="nav-arrow"/></button></nav>
       <button class="side-service" :class="{active:page==='commissions'}" @click="navigate('commissions')"><Gift :size="20"/>邀请好友</button><button v-if="user?.role==='admin'" class="side-service" @click="navigate('admin')"><ShieldCheck :size="20"/>管理员后台</button><div class="sidebar-line"></div><div class="sidebar-caption">为你服务</div>
       <button class="side-service" @click="openModal('support')"><Headphones :size="20"/>帮助中心</button>
       <button class="side-service" @click="openModal('mobile')"><Smartphone :size="20"/>手机畅玩</button>
@@ -60,7 +60,7 @@ function trapFocus(event: KeyboardEvent) { if (event.key !== 'Tab') return; cons
     </aside>
 
     <div class="main-shell">
-      <header class="desktop-topbar"><div class="breadcrumb">探索 <ChevronRight :size="14"/><strong>{{ activeGame ? activeGame.name : nav.find(n => n.id === page)?.label || ({wallet:'我的钱包',commissions:'邀请好友',ledger:'账变记录',transactions:'交易记录',daily:'每日输赢',admin:'管理员后台'} as Record<string,string>)[page] }}</strong></div><div class="topbar-right"><span class="status"><i></i>欢迎来到金沙</span><button class="icon-button" aria-label="消息通知" @click="openModal('notifications')"><Bell :size="20"/><b class="notification-dot"></b></button><button class="avatar" @click="navigate('profile')">S</button><span v-if="user" class="user-name">{{user.username}}<small>{{user.role==='admin'?'ADMIN':'STAR MEMBER'}}</small></span><button v-else class="primary-button header-login" @click="authOpen=true">登录 / 注册</button></div></header>
+      <header class="desktop-topbar"><div class="breadcrumb">探索 <ChevronRight :size="14"/><strong>{{ activeGame ? activeGame.name : nav.find(n => n.id === page)?.label || ({wallet:'我的钱包',commissions:'邀请好友',team:'我的团队',ledger:'账变记录',transactions:'交易记录',daily:'每日输赢',admin:'管理员后台'} as Record<string,string>)[page] }}</strong></div><div class="topbar-right"><span class="status"><i></i>欢迎来到金沙</span><button class="icon-button" aria-label="消息通知" @click="openModal('notifications')"><Bell :size="20"/><b class="notification-dot"></b></button><button class="avatar" @click="navigate('profile')">S</button><span v-if="user" class="user-name">{{user.username}}<small>{{user.role==='admin'?'ADMIN':'STAR MEMBER'}}</small></span><button v-else class="primary-button header-login" @click="authOpen=true">登录 / 注册</button></div></header>
       <main>
         <HomeLobby v-if="page === 'home' && !activeGame" :balance="balance" :username="user?.username" :announcement="announcement" :favorite-ids="favoriteIds" :category="category" @category="category=$event" @game="openGame" @session="openSession" @navigate="navigate" @wallet="mode=>{walletMode=mode;navigate('wallet')}" @help="openModal('support')" @notice="openModal('notifications')" @login="authOpen=true" @refresh="refreshBalance" @favorite="favorite" @notify="notify"/>
 
@@ -69,14 +69,14 @@ function trapFocus(event: KeyboardEvent) { if (event.key !== 'Tab') return; cons
          <GameRoom :initial-session-id="activeSessionId" :key="activeGame.id" :game="activeGame" :balance="balance" :play-settings="site?.plays ?? []" :submitting="submitting" :receipt-version="receiptVersion" :logged-in="!!user" @busy="marketPending=$event" @back="activeGame=null;activeSessionId=''" @records="navigate('records')" @notify="notify" @submit="savePick" @login="authOpen=true"/>
         </GameAccessGate>
 
-        <AccountPanel v-else-if="['profile','wallet','records','commissions','ledger','transactions','daily'].includes(page)" :page="page" :wallet-mode="walletMode" @busy="walletPending=$event" @login="authOpen=true" @navigate="navigate" @notify="notify" @logout="signOut" @wallet="mode=>{walletMode=mode;navigate('wallet')}"/>
+        <AccountPanel v-else-if="['profile','wallet','records','commissions','team','ledger','transactions','daily'].includes(page)" :page="page" :wallet-mode="walletMode" @busy="walletPending=$event" @login="authOpen=true" @navigate="navigate" @notify="notify" @logout="signOut" @wallet="mode=>{walletMode=mode;navigate('wallet')}"/>
         <AdminPanel v-else-if="page==='admin'" @login="authOpen=true" @notify="notify"/>
         <PromotionsPage v-else-if="page==='promotions'" @navigate="action=>{if(action==='favorites'){navigate('home');category='favorites'}else navigate(action)}"/>
 
         <footer class="main-footer"><span>✦ JS CLUB</span><p>让每一刻，都有期待</p><small>账户中心 · 定时开奖</small></footer>
       </main>
     </div>
-    <nav class="mobile-nav"><button v-for="item in [{id:'home',label:'首页',icon:House},{id:'promotions',label:'优惠',icon:Gift},{id:'wallet',label:'资金',icon:Wallet},{id:'profile',label:'我的',icon:UserRound}]" :key="item.id" :class="{ active: page === item.id }" @click="navigate(item.id)"><component :is="item.icon" :size="23"/><span>{{ item.id === 'home' ? '首页' : item.id === 'profile' ? '我的' : item.label }}</span><i v-if="page === item.id"></i></button></nav>
+    <nav class="mobile-nav"><button v-for="item in [{id:'home',label:'首页',icon:House},{id:'promotions',label:'优惠',icon:Gift},{id:'wallet',label:'资金',icon:Wallet},{id:'profile',label:'我的',icon:UserRound}]" :key="item.id" :class="{ active: page === item.id || page === 'team' && item.id === 'profile' }" @click="navigate(item.id)"><component :is="item.icon" :size="23"/><span>{{ item.id === 'home' ? '首页' : item.id === 'profile' ? '我的' : item.label }}</span><i v-if="page === item.id"></i></button></nav>
     <AuthDialog v-if="authOpen" @close="authOpen=false" @success="signedIn"/>
     <Transition name="toast"><div v-if="toast" class="toast-message" role="status"><Check :size="18"/>{{ toast }}</div></Transition>
     <div v-if="modal" class="modal-overlay" @click.self="closeModal" @keydown.esc="closeModal" @keydown="trapFocus">

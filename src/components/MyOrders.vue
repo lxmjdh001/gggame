@@ -4,10 +4,11 @@ import {displayGameName} from '../data'
 import {ref,computed,watch,onUnmounted} from 'vue'
 import {ChevronLeft,ChevronRight,Filter,RefreshCw} from 'lucide-vue-next'
 import {api,user,account,money,type Order} from '../api/account'
+import {beijingToday} from '../lib/beijingDate'
 interface OrderPage {items:Order[];total:number;page:number;page_size:number;total_stake_cents:number;total_payout_cents:number}
 const emit=defineEmits<{back:[];login:[]}>()
 const orders=ref<Order[]>([]),page=ref(1),total=ref(0),stake=ref(0),payout=ref(0),loading=ref(false),error=ref(''),filterOpen=ref(false),status=ref('')
-const startDate=ref(''),endDate=ref(''),appliedStart=ref(''),appliedEnd=ref(''),dateError=ref('')
+const startDate=ref(beijingToday()),endDate=ref(beijingToday()),appliedStart=ref(beijingToday()),appliedEnd=ref(beijingToday()),dateError=ref(''),followingToday=ref(true)
 const hasFilters=computed(()=>Boolean(status.value||appliedStart.value||appliedEnd.value))
 const filters=[{value:'',label:'全部记录'},{value:'win',label:'已中奖'},{value:'lose',label:'未中奖'},{value:'pending',label:'未开奖'},{value:'push',label:'和局退本'},{value:'refunded',label:'已撤销'}]
 const pages=computed(()=>Math.max(1,Math.ceil(total.value/10)))
@@ -27,6 +28,7 @@ let version=0
 async function load(requestedPage=page.value){
  const id=user.value?.id
  if(!id)return
+ if(followingToday.value){const day=beijingToday();if(day!==appliedStart.value){startDate.value=day;endDate.value=day;appliedStart.value=day;appliedEnd.value=day;resetRecords();requestedPage=1}}
  const current=++version
  loading.value=true;error.value=''
  try{
@@ -55,11 +57,12 @@ function applyDates(){
  dateError.value=''
  if(!validDate(startDate.value)||!validDate(endDate.value)){dateError.value='请输入有效日期（YYYY-MM-DD）';return}
  if(startDate.value&&endDate.value&&startDate.value>endDate.value){dateError.value='开始日期不能晚于结束日期';return}
- appliedStart.value=startDate.value;appliedEnd.value=endDate.value;resetRecords();void load(1)
+ followingToday.value=false;appliedStart.value=startDate.value;appliedEnd.value=endDate.value;resetRecords();void load(1)
 }
 function clearDates(){startDate.value='';endDate.value='';applyDates()}
+function today(){const day=beijingToday();startDate.value=day;endDate.value=day;applyDates();followingToday.value=true}
 watch(()=>user.value?.id,()=>{
- version++;resetRecords();status.value='';startDate.value='';endDate.value='';appliedStart.value='';appliedEnd.value='';dateError.value='';filterOpen.value=false;error.value='';loading.value=false
+ const day=beijingToday();version++;resetRecords();status.value='';startDate.value=day;endDate.value=day;appliedStart.value=day;appliedEnd.value=day;followingToday.value=true;dateError.value='';filterOpen.value=false;error.value='';loading.value=false
  void load(1)
 },{immediate:true,flush:'sync'})
 watch(()=>account.value,()=>{if(!loading.value)void load()})
@@ -73,12 +76,13 @@ onUnmounted(()=>{version++})
   <form class="bet-record-dates" aria-label="投注创建日期筛选（北京时间）" @submit.prevent="applyDates" @invalid.capture="dateError='请输入有效日期（YYYY-MM-DD）'">
    <label>开始日期<input v-model="startDate" type="date" min="0001-01-01" max="9999-12-31" :disabled="!user"/></label>
    <label>结束日期<input v-model="endDate" type="date" min="0001-01-01" max="9999-12-31" :disabled="!user"/></label>
-   <button type="submit" :disabled="!user">应用</button><button type="button" :disabled="!user" @click="clearDates">清除日期</button>
-   <p class="bet-record-date-hint">按北京时间投注创建日期筛选，开始/结束日均可不填，包含结束日全天；修改日期后点击应用。</p>
+   <button type="submit" :disabled="!user">应用</button><button type="button" :disabled="!user" @click="today">今天</button><button type="button" :disabled="!user" @click="clearDates">全部日期</button>
+   <p class="bet-record-date-hint">默认显示北京时间当天的投注；可选择日期范围，包含结束日全天。修改后点击应用，选择“全部日期”查看历史。</p>
    <p v-if="dateError" class="form-error" role="alert">{{dateError}}</p>
   </form>
  </div>
  <template v-if="user">
+  <p class="bet-record-range" aria-live="polite">{{appliedStart&&appliedStart===appliedEnd?appliedStart+'（北京时间）':appliedStart||appliedEnd?(appliedStart||'最早')+' 至 '+(appliedEnd||'最新'):'全部日期'}}</p>
   <div class="bet-record-totals" aria-label="投注记录汇总"><span>总注数 <b>{{total}}</b></span><span>总投注金额 <b>{{money(stake)}}元</b></span><span>总派彩金额 <b>{{money(payout)}}元</b></span></div>
   <div v-if="error" class="form-error" role="alert">{{error}} <button class="text-button" @click="load()">重试</button></div>
   <p v-if="loading" class="bet-record-empty" role="status">正在加载投注记录…</p>
@@ -98,6 +102,7 @@ onUnmounted(()=>{version++})
 </template>
 <style scoped>
 .bet-records{min-height:100%;background:#fff;color:#30313b;font-family:Arial,'Microsoft YaHei','PingFang SC',sans-serif;padding-bottom:28px}
+.bet-record-range{margin:0;padding:10px 18px 0;font-size:12px;color:#81738e}
 .bet-record-header{display:grid;grid-template-columns:42px minmax(0,1fr) 42px;align-items:center;min-height:52px;padding:0 10px;background:linear-gradient(110deg,#4e60ec,#8050e9);color:#fff}
 .bet-record-header h1{text-align:center;font-size:19px;font-weight:500;margin:0}.bet-record-header button{position:relative;display:grid;place-items:center;min-height:42px}.bet-record-header i{position:absolute;top:7px;right:5px;width:6px;height:6px;border-radius:50%;background:#ffe29d}
 .bet-record-totals{display:flex;align-items:center;flex-wrap:wrap;gap:7px 16px;padding:11px 18px 9px;font-size:13px;line-height:1.6;border-bottom:1px solid #f5f4f7}.bet-record-totals span{white-space:nowrap}.bet-record-totals b{font-weight:500;margin-left:5px;font-variant-numeric:tabular-nums}

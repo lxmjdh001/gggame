@@ -149,7 +149,9 @@ func (s *Store) accountAt(id string, now time.Time) (map[string]any, error) {
 			parent := v.InviterID
 			for level := 1; level <= 3 && parent != ""; level++ {
 				if parent == id {
-					members = append(members, Member{ID: v.ID, Username: v.Username, Level: level, CreatedAt: v.CreatedAt.Format("2006-01-02 15:04"), Balance: v.Balance, TodayStake: todayStakes[v.ID]})
+					if level == 1 && !v.Deleted {
+						members = append(members, Member{ID: v.ID, Username: v.Username, Level: level, CreatedAt: v.CreatedAt.Format("2006-01-02 15:04"), Balance: v.Balance, TodayStake: todayStakes[v.ID]})
+					}
 					counts[level-1]++
 					break
 				}
@@ -157,10 +159,8 @@ func (s *Store) accountAt(id string, now time.Time) (map[string]any, error) {
 			}
 		}
 		sort.Slice(members, func(i, j int) bool { return members[i].CreatedAt > members[j].CreatedAt })
-		if len(members) > 200 {
-			members = members[:200]
-		}
 		out["members"] = members
+		out["team_day"] = local.Format("2006-01-02")
 		out["team_counts"] = counts
 		return nil
 	})

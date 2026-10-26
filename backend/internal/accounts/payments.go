@@ -251,10 +251,11 @@ func usdtTransactionKey(network, transactionID string) string {
 	return network + ":" + strings.TrimPrefix(strings.ToLower(transactionID), "0x")
 }
 
-// The public wallet accepts only new USDT requests. Previously accepted manual
+// Deposits use USDT; withdrawals also accept the supported wallet accounts.
+// Previously accepted manual
 // requests remain reviewable and exact retries still resolve their original ID.
 func (s *Store) SubmitUSDTWalletRequest(id string, in WalletSubmission) (WalletRequest, error) {
-	if in.PaymentMethod == "usdt" {
+	if in.PaymentMethod == "usdt" || in.Kind == "withdraw" && walletWithdrawalMethod(in.PaymentMethod) {
 		return s.SubmitWalletRequest(id, in)
 	}
 	var accepted bool
@@ -279,7 +280,7 @@ func (s *Store) SubmitUSDTWalletRequest(id string, in WalletSubmission) (WalletR
 		return WalletRequest{}, err
 	}
 	if !accepted {
-		return WalletRequest{}, errors.New("充值和提现仅支持USDT，请刷新页面后选择USDT账户")
+		return WalletRequest{}, errors.New("请选择支持的收款账户类型；充值仅支持USDT")
 	}
 	return s.SubmitWalletRequest(id, in)
 }

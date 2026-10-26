@@ -56,7 +56,7 @@ func TestInviteFriendsTeamBalancesAndBeijingDailyStakes(t *testing.T) {
 	result, err := s.accountAt("member", now)
 	must(t, err)
 	members := result["members"].([]Member)
-	if len(members) != 3 || result["team_counts"] != [3]int{1, 1, 1} {
+	if len(members) != 1 || result["team_counts"] != [3]int{1, 1, 1} || result["team_day"] != "2026-10-20" {
 		t.Fatalf("team scope wrong: %+v", members)
 	}
 	byID := map[string]Member{}
@@ -67,7 +67,7 @@ func TestInviteFriendsTeamBalancesAndBeijingDailyStakes(t *testing.T) {
 		id             string
 		level          int
 		balance, stake int64
-	}{{"friend1", 1, 1987700, 700}, {"friend2", 2, 2304400, 20500}, {"friend3", 3, 1550400, 23000}} {
+	}{{"friend1", 1, 1987700, 700}} {
 		got := byID[want.id]
 		if got.Level != want.level || got.Balance != want.balance || got.TodayStake != want.stake {
 			t.Fatalf("member %s mismatch: %+v", want.id, got)
@@ -75,7 +75,7 @@ func TestInviteFriendsTeamBalancesAndBeijingDailyStakes(t *testing.T) {
 	}
 	encoded, err := json.Marshal(members)
 	must(t, err)
-	for _, secret := range []string{"OutsideFourthLevel", "Unrelated", "13900139000", "private_wechat", "私密姓名", "private_hash", "private_salt"} {
+	for _, secret := range []string{"Friend2", "Friend3", "OutsideFourthLevel", "Unrelated", "13900139000", "private_wechat", "私密姓名", "private_hash", "private_salt"} {
 		if strings.Contains(string(encoded), secret) {
 			t.Fatal("unrelated or private data exposed", secret)
 		}

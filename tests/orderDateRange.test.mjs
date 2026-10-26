@@ -6,6 +6,7 @@ import ts from 'typescript'
 import {parse,compileScript} from '@vue/compiler-sfc'
 import * as vue from 'vue'
 
+const today='2026-10-26'
 const source=readFileSync(new URL('../src/components/MyOrders.vue',import.meta.url),'utf8')
 const descriptor=parse(source).descriptor
 const settle=async()=>{await vue.nextTick();await new Promise(resolve=>setImmediate(resolve));await vue.nextTick()}
@@ -17,11 +18,12 @@ function evaluate(code,require){
  vm.runInNewContext(ts.transpileModule(code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,context)
  return context.exports
 }
-function harness(reply=async()=>data()){
+function harness(reply=async()=>data(),getDay=()=>today){
  const user=vue.ref({id:'member'}),account=vue.ref(null),calls=[],stops=[],unmount=[]
- const state=evaluate(descriptor.scriptSetup.content+'\nexport {load,filter,applyDates,clearDates,validDate,startDate,endDate,appliedStart,appliedEnd,status,orders,page,total,stake,payout,loading,error,dateError,hasFilters,filterOpen}',name=>{
+ const state=evaluate(descriptor.scriptSetup.content+'\nexport {load,filter,applyDates,clearDates,today,validDate,startDate,endDate,appliedStart,appliedEnd,status,orders,page,total,stake,payout,loading,error,dateError,hasFilters,filterOpen}',name=>{
   if(name==='vue')return {...vue,watch(...args){const stop=vue.watch(...args);stops.push(stop);return stop},onUnmounted:fn=>unmount.push(fn)}
   if(name.includes('/api/account'))return {user,account,api:path=>{calls.push(path);return reply(path)},money:String}
+  if(name.includes('beijingDate'))return {beijingToday:getDay}
   if(name.includes('issueDisplay'))return {formatIssue:String}
   if(name==='../data')return {displayGameName:String}
   if(name==='lucide-vue-next')return {}
@@ -29,6 +31,20 @@ function harness(reply=async()=>data()){
  })
  return {s:state,user,account,calls,close(){stops.forEach(stop=>stop());unmount.forEach(fn=>fn())}}
 }
+
+test('initial query is today; default follows Beijing midnight while explicit history stays applied',async()=>{
+ let day=today
+ const h=harness(async path=>data({page:Number(params(path).page),total:30}),()=>day)
+ try{
+  await settle();assert.deepEqual(params(h.calls[0]),{page:'1',start_date:today,end_date:today})
+  await h.s.load(2);day='2026-10-27';h.account.value={};await settle()
+  assert.deepEqual(params(h.calls.at(-1)),{page:'1',start_date:day,end_date:day})
+  h.s.startDate.value='2026-10-01';h.s.endDate.value='2026-10-02';h.s.applyDates();await settle()
+  day='2026-10-28';h.account.value={};await settle()
+  assert.deepEqual(params(h.calls.at(-1)),{page:'1',start_date:'2026-10-01',end_date:'2026-10-02'})
+  h.s.today();await settle();assert.deepEqual(params(h.calls.at(-1)),{page:'1',start_date:day,end_date:day})
+ }finally{h.close()}
+})
 
 test('dates apply on submission at page one; polling and pagination retain applied dates rather than drafts',async()=>{
  const h=harness(async path=>data({page:Number(params(path).page),total:27,total_stake_cents:2700,total_payout_cents:5400}))
@@ -65,7 +81,7 @@ test('strict calendar validation includes leap centuries, optional endpoints and
   h.s.startDate.value='2024-03-01';h.s.endDate.value='2024-02-29'
   const count=h.calls.length;h.s.applyDates();await settle()
   assert.equal(h.calls.length,count);assert.match(h.s.dateError.value,/开始日期不能晚于结束日期/)
-  assert.equal(h.s.appliedStart.value,'');assert.equal(h.s.appliedEnd.value,'')
+  assert.equal(h.s.appliedStart.value,today);assert.equal(h.s.appliedEnd.value,today)
   for(const [start,end] of [['2024-02-29','2024-02-29'],['2024-02-29',''],['','2024-02-29']]){
    h.s.startDate.value=start;h.s.endDate.value=end;h.s.applyDates();await settle()
    const query=params(h.calls.at(-1));assert.equal(query.start_date??'',start);assert.equal(query.end_date??'',end)
@@ -80,7 +96,7 @@ test('newer filters win over stale successes and failures without clearing the c
  try{
   await settle();pending=true
   const old=h.s.load(2)
-  h.s.startDate.value='2024-02-29';h.s.applyDates()
+  h.s.startDate.value='2024-02-29';h.s.endDate.value='';h.s.applyDates()
   requests[0].resolve(data({items:[{id:'stale'}],total:999,page:2}));await old
   assert.equal(h.s.orders.value.length,0);assert.equal(h.s.total.value,0);assert.equal(h.s.loading.value,true)
   requests[1].resolve(data({total:9,total_stake_cents:900}));await settle()
@@ -101,8 +117,9 @@ test('switching accounts synchronously clears old records, summaries, drafts and
   pending=true;const old=h.s.load(2)
   h.user.value={id:'other'}
   assert.equal(h.s.orders.value.length,0);assert.equal(h.s.total.value,0);assert.equal(h.s.stake.value,0);assert.equal(h.s.payout.value,0)
-  for(const key of ['status','startDate','endDate','appliedStart','appliedEnd','dateError','error'])assert.equal(h.s[key].value,'',key)
-  assert.equal(h.s.page.value,1);assert.deepEqual(params(h.calls.at(-1)),{page:'1'})
+  for(const key of ['status','dateError','error'])assert.equal(h.s[key].value,'',key)
+  for(const key of ['startDate','endDate','appliedStart','appliedEnd'])assert.equal(h.s[key].value,today,key)
+  assert.equal(h.s.page.value,1);assert.deepEqual(params(h.calls.at(-1)),{page:'1',start_date:today,end_date:today})
   // Return to the original identity before its old request resolves (A -> B -> A).
   h.user.value={id:'member'}
   requests[0].resolve(data({items:[{id:'old-private'}],total:999}));await old
@@ -117,7 +134,7 @@ test('failed date submission clears previous data, can retry the applied query, 
  let fail=false
  const h=harness(async()=>{if(fail)throw Error('网络异常');return data()})
  try{
-  await settle();fail=true;h.s.endDate.value='2024-02-29';h.s.applyDates();await settle()
+  await settle();fail=true;h.s.startDate.value='';h.s.endDate.value='2024-02-29';h.s.applyDates();await settle()
   assert.match(h.s.error.value,/网络异常/);assert.equal(h.s.orders.value.length,0);assert.equal(h.s.total.value,0);assert.equal(h.s.loading.value,false)
   fail=false;await h.s.load()
   assert.deepEqual(params(h.calls.at(-1)),{page:'1',end_date:'2024-02-29'})
@@ -138,6 +155,7 @@ test('compiled member form wires date inputs, submit prevention, validation feed
  const component=evaluate(compileScript(descriptor,{id:'order-range-test',inlineTemplate:true}).content,name=>{
   if(name==='vue')return {...vue,vModelText:{}}
   if(name.includes('/api/account'))return {user,account,api:async path=>{calls.push(path);return data()},money:String}
+  if(name.includes('beijingDate'))return {beijingToday:()=>today}
   if(name.includes('issueDisplay'))return {formatIssue:String}
   if(name==='../data')return {displayGameName:String}
   if(name==='lucide-vue-next')return Object.fromEntries(['ChevronLeft','ChevronRight','Filter','RefreshCw'].map(name=>[name,()=>null]))
@@ -168,7 +186,7 @@ test('compiled member form wires date inputs, submit prevention, validation feed
   form.props.onSubmit({preventDefault(){prevented++}});await settle()
   assert.deepEqual(params(calls.at(-1)),{page:'1',start_date:'2024-02-29',end_date:'2024-02-29'})
   assert.match(text(),/暂无符合条件的投注记录/)
-  find(el=>el.type==='button'&&text(el)==='清除日期').props.onClick();await settle()
+  find(el=>el.type==='button'&&text(el)==='全部日期').props.onClick();await settle()
   assert.deepEqual(params(calls.at(-1)),{page:'1'});assert.match(text(),/暂无投注记录/);assert.doesNotMatch(text(),/开始日期不能晚于结束日期/)
  }finally{app.unmount()}
 })

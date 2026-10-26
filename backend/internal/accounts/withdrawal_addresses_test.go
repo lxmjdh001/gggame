@@ -18,7 +18,7 @@ func TestSavedWithdrawalAddressesIsolationVersionsAndRestart(t *testing.T) {
 	financial := managementFinancialSnapshot(t, s)
 	empty, err := s.WithdrawalAddresses("member")
 	must(t, err)
-	if len(empty) != 2 || empty[0].Version != 0 || empty[0].Address != "" {
+	if len(empty) != 7 || empty[0].Version != 0 || empty[0].Address != "" {
 		t.Fatal(empty)
 	}
 	trc := "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb"
