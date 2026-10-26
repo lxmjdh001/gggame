@@ -1,7 +1,7 @@
 import { ref, computed } from 'vue'
 import { withRequestTimeout } from '../lib/requestTimeout'
 import type { Session } from './games'
-export interface User { id:string;username:string;phone?:string;name?:string;wechat?:string;withdrawal_password_set?:boolean;security_question_set?:boolean;secondary_password_set?:boolean;secondary_password_enabled?:boolean;role:string;status:string;invite_code:string;inviter_id?:string;balance_cents:number;frozen_cents:number;created_at:string }
+export interface User { id:string;username:string;phone?:string;name?:string;wechat?:string;withdrawal_password_set?:boolean;security_question_set?:boolean;secondary_password_set?:boolean;secondary_password_enabled?:boolean;role:string;status:string;deleted?:boolean;invite_code:string;inviter_id?:string;balance_cents:number;frozen_cents:number;created_at:string }
 export interface PlaySetting {session_id:string;enabled:boolean;unit_cents:number;max_multiplier:number;close_seconds:number;max_stake_cents:number;user_issue_limit_cents:number}
 export interface SiteSettings {registration:boolean;invite_required:boolean;registration_bonus_cents:number;commission_bps:[number,number,number];announcement:string;plays:PlaySetting[]}
 export interface Ledger {id:string;kind:string;amount_cents:number;balance_cents:number;frozen_cents:number;note:string;created_at:string}
@@ -30,7 +30,7 @@ export const money=(cents:number=0)=>(cents/100).toLocaleString('en-US',{minimum
 export const datetime=(s:string)=>s?new Date(s).toLocaleString('zh-CN',{hour12:false,timeZone:'Asia/Shanghai'}):'—'
 export const key=()=>Array.from(crypto.getRandomValues(new Uint8Array(24)),n=>n.toString(16).padStart(2,'0')).join('')
 export function cents(s:string):number{if(!/^-?\d+(\.\d{1,2})?$/.test(s.trim()))throw new Error('金额最多保留两位小数');const n=Math.round(Number(s)*100);if(!Number.isSafeInteger(n))throw new Error('金额超出范围');return n}
-export const labels:Record<string,string>={pending:'待处理',settled:'已结算',refunded:'已撤销',approved:'已通过',rejected:'已驳回',available:'待领取',claimed:'已领取',active:'正常',disabled:'已停用',deposit:'充值',withdraw:'提现',registration_bonus:'注册赠送',admin_adjust:'余额调整',admin_deposit:'充值',admin_reward:'奖励',withdraw_hold:'提现冻结',withdraw_approved:'提现完成',withdraw_rejected:'提现解冻',deposit_approved:'充值入账',order:'投注冻结',order_settled:'订单派彩',order_refunded:'订单退回',commission:'佣金入账'}
+export const labels:Record<string,string>={pending:'待处理',settled:'已结算',refunded:'已撤销',approved:'已通过',rejected:'已驳回',available:'待领取',claimed:'已领取',active:'正常',disabled:'已停用',deleted:'已删除',deposit:'充值',withdraw:'提现',registration_bonus:'注册赠送',admin_adjust:'余额调整',admin_deposit:'充值',admin_reward:'奖励',withdraw_hold:'提现冻结',withdraw_approved:'提现完成',withdraw_rejected:'提现解冻',deposit_approved:'充值入账',order:'投注冻结',order_settled:'订单派彩',order_refunded:'订单退回',commission:'佣金入账'}
 export const sessionNames=ref<Record<string,string>>({})
 export const sessionCatalog=ref<Session[]>([])
 export async function loadSessionNames(){const d=await api<{sessions:Session[]}>('/games');sessionCatalog.value=d.sessions;sessionNames.value=Object.fromEntries(d.sessions.map(s=>[s.id,s.game_name+' · '+s.name]))}

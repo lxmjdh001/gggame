@@ -44,6 +44,9 @@ func managementMember(tx *bolt.Tx, actor, id string) (storedUser, error) {
 	if u.Role != "user" || u.ID == actor {
 		return u, errors.New("此功能仅可操作会员账户")
 	}
+	if u.Deleted {
+		return u, errors.New("会员已删除，请先恢复账号")
+	}
 	return u, nil
 }
 func managementNote(note string) (string, error) {

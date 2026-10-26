@@ -7,6 +7,8 @@ import {api,user,account,money,type Order} from '../api/account'
 interface OrderPage {items:Order[];total:number;page:number;page_size:number;total_stake_cents:number;total_payout_cents:number}
 const emit=defineEmits<{back:[];login:[]}>()
 const orders=ref<Order[]>([]),page=ref(1),total=ref(0),stake=ref(0),payout=ref(0),loading=ref(false),error=ref(''),filterOpen=ref(false),status=ref('')
+const startDate=ref(''),endDate=ref(''),appliedStart=ref(''),appliedEnd=ref(''),dateError=ref('')
+const hasFilters=computed(()=>Boolean(status.value||appliedStart.value||appliedEnd.value))
 const filters=[{value:'',label:'全部记录'},{value:'win',label:'已中奖'},{value:'lose',label:'未中奖'},{value:'pending',label:'未开奖'},{value:'push',label:'和局退本'},{value:'refunded',label:'已撤销'}]
 const pages=computed(()=>Math.max(1,Math.ceil(total.value/10)))
 const timeFormat=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false})
@@ -28,24 +30,54 @@ async function load(requestedPage=page.value){
  const current=++version
  loading.value=true;error.value=''
  try{
-  const data=await api<OrderPage>(`/orders?page=${requestedPage}${status.value?'&status='+status.value:''}`)
+  const query=new URLSearchParams({page:String(requestedPage)})
+  if(status.value)query.set('status',status.value)
+  if(appliedStart.value)query.set('start_date',appliedStart.value)
+  if(appliedEnd.value)query.set('end_date',appliedEnd.value)
+  const data=await api<OrderPage>(`/orders?${query}`)
   if(current!==version||user.value?.id!==id)return
   orders.value=data.items;total.value=data.total;page.value=data.page;stake.value=data.total_stake_cents;payout.value=data.total_payout_cents
- }catch(e){if(current===version)error.value=(e as Error).message}
- finally{if(current===version)loading.value=false}
+ }catch(e){if(current===version&&user.value?.id===id)error.value=(e as Error).message}
+ finally{if(current===version&&user.value?.id===id)loading.value=false}
 }
-function filter(value:string){if(status.value===value)return;status.value=value;orders.value=[];total.value=0;stake.value=0;payout.value=0;void load(1)}
+function resetRecords(){orders.value=[];page.value=1;total.value=0;stake.value=0;payout.value=0}
+function filter(value:string){if(status.value===value)return;status.value=value;resetRecords();void load(1)}
+function validDate(value:string){
+ if(!value)return true
+ if(!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(value))return false
+ const [year,month,day]=value.split('-').map(Number)
+ const leap=year%4===0&&(year%100!==0||year%400===0)
+ const days=[31,leap?29:28,31,30,31,30,31,31,30,31,30,31]
+ return Boolean(year&&month&&month<=12&&day&&day<=days[month-1])
+}
+function applyDates(){
+ if(!user.value)return
+ dateError.value=''
+ if(!validDate(startDate.value)||!validDate(endDate.value)){dateError.value='请输入有效日期（YYYY-MM-DD）';return}
+ if(startDate.value&&endDate.value&&startDate.value>endDate.value){dateError.value='开始日期不能晚于结束日期';return}
+ appliedStart.value=startDate.value;appliedEnd.value=endDate.value;resetRecords();void load(1)
+}
+function clearDates(){startDate.value='';endDate.value='';applyDates()}
 watch(()=>user.value?.id,()=>{
- version++;orders.value=[];page.value=1;total.value=0;stake.value=0;payout.value=0;status.value='';error.value='';loading.value=false
+ version++;resetRecords();status.value='';startDate.value='';endDate.value='';appliedStart.value='';appliedEnd.value='';dateError.value='';filterOpen.value=false;error.value='';loading.value=false
  void load(1)
-},{immediate:true})
+},{immediate:true,flush:'sync'})
 watch(()=>account.value,()=>{if(!loading.value)void load()})
 onUnmounted(()=>{version++})
 </script>
 <template>
 <section class="bet-records" :aria-busy="loading">
- <header class="bet-record-header"><button aria-label="返回个人中心" @click="emit('back')"><ChevronLeft :size="24"/></button><h1>彩票投注记录</h1><button aria-label="筛选投注记录" :aria-expanded="filterOpen" aria-controls="bet-record-filters" @click="filterOpen=!filterOpen"><Filter :size="21"/><i v-if="status"/></button></header>
- <nav v-if="filterOpen" id="bet-record-filters" class="bet-record-filters" aria-label="投注状态筛选"><button v-for="f in filters" :key="f.value" :aria-pressed="status===f.value" :class="{active:status===f.value}" :disabled="!user" @click="filter(f.value)">{{f.label}}</button><button :disabled="loading||!user" aria-label="刷新投注记录" @click="load()"><RefreshCw :size="13"/>刷新</button></nav>
+ <header class="bet-record-header"><button aria-label="返回个人中心" @click="emit('back')"><ChevronLeft :size="24"/></button><h1>彩票投注记录</h1><button aria-label="筛选投注记录" :aria-expanded="filterOpen" aria-controls="bet-record-filters" @click="filterOpen=!filterOpen"><Filter :size="21"/><i v-if="hasFilters"/></button></header>
+ <div v-if="filterOpen" id="bet-record-filters" class="bet-record-filters">
+  <nav class="bet-record-status" aria-label="投注状态筛选"><button v-for="f in filters" :key="f.value" :aria-pressed="status===f.value" :class="{active:status===f.value}" :disabled="!user" @click="filter(f.value)">{{f.label}}</button><button :disabled="loading||!user" aria-label="刷新投注记录" @click="load()"><RefreshCw :size="13"/>刷新</button></nav>
+  <form class="bet-record-dates" aria-label="投注创建日期筛选（北京时间）" @submit.prevent="applyDates" @invalid.capture="dateError='请输入有效日期（YYYY-MM-DD）'">
+   <label>开始日期<input v-model="startDate" type="date" min="0001-01-01" max="9999-12-31" :disabled="!user"/></label>
+   <label>结束日期<input v-model="endDate" type="date" min="0001-01-01" max="9999-12-31" :disabled="!user"/></label>
+   <button type="submit" :disabled="!user">应用</button><button type="button" :disabled="!user" @click="clearDates">清除日期</button>
+   <p class="bet-record-date-hint">按北京时间投注创建日期筛选，开始/结束日均可不填，包含结束日全天；修改日期后点击应用。</p>
+   <p v-if="dateError" class="form-error" role="alert">{{dateError}}</p>
+  </form>
+ </div>
  <template v-if="user">
   <div class="bet-record-totals" aria-label="投注记录汇总"><span>总注数 <b>{{total}}</b></span><span>总投注金额 <b>{{money(stake)}}元</b></span><span>总派彩金额 <b>{{money(payout)}}元</b></span></div>
   <div v-if="error" class="form-error" role="alert">{{error}} <button class="text-button" @click="load()">重试</button></div>
@@ -57,7 +89,7 @@ onUnmounted(()=>{version++})
     <time :datetime="o.created_at">{{timestamp(o.created_at)}}</time>
    </article>
   </div>
-  <p v-if="!orders.length&&!loading&&!error" class="bet-record-empty">{{status?'暂无符合条件的投注记录':'暂无投注记录'}}</p>
+  <p v-if="!orders.length&&!loading&&!error" class="bet-record-empty">{{hasFilters?'暂无符合条件的投注记录':'暂无投注记录'}}</p>
   <p v-if="orders.length&&!loading&&!error&&pages===1" class="bet-record-end">已加载全部数据</p>
   <nav v-if="pages>1" class="bet-record-pagination" aria-label="投注记录分页"><span aria-live="polite">第 {{page}} / {{pages}} 页</span><div><button :disabled="page<=1||loading" aria-label="投注记录上一页" @click="load(page-1)"><ChevronLeft :size="16"/>上一页</button><button :disabled="page>=pages||loading" aria-label="投注记录下一页" @click="load(page+1)">下一页<ChevronRight :size="16"/></button></div></nav>
  </template>
@@ -72,7 +104,7 @@ onUnmounted(()=>{version++})
 .bet-record{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:9px 18px;padding:22px 24px 20px;border-bottom:1px solid #f2f1f5}.bet-record h2{font-size:16px;font-weight:500;margin:0;line-height:1.4;overflow-wrap:anywhere}.bet-record-result{font-size:14px;line-height:1.6;font-weight:500;text-align:right;white-space:nowrap;color:#41414c}.bet-record-result.win{color:#ae557b}.bet-record-result.pending{color:#7b6bad}.bet-record-result.push{color:#4c9c87}.bet-record-result.refunded{color:#92919a}
 .bet-record dl{margin:0;min-width:0;grid-column:1;display:grid;gap:2px;font-size:14px;line-height:1.6}.bet-record dl>div{display:grid;grid-template-columns:67px minmax(0,1fr);gap:8px}.bet-record dt{white-space:nowrap}.bet-record dd{margin:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}.bet-record time{align-self:center;grid-column:2;font-size:13px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
 .bet-record-empty,.bet-record-end{padding:25px 16px;text-align:center;font-size:14px;color:#6c6976}.bet-record-empty .primary-button{margin:20px auto 0}.bet-record-pagination{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:22px 18px;font-size:12px;color:#716a7d}.bet-record-pagination>div{display:flex;gap:10px}.bet-record-pagination button{display:flex;align-items:center;gap:3px;padding:8px 4px}.bet-record-pagination button:disabled{opacity:.35;cursor:not-allowed}
-.bet-record-filters{display:flex;flex-wrap:wrap;gap:8px;padding:13px 16px;border-bottom:1px solid #ece8f4}.bet-record-filters button{display:flex;align-items:center;gap:4px;font-size:12px;padding:7px 10px;border-radius:4px;background:#f4f1fa;color:#726782}.bet-record-filters button.active{background:#7655df;color:#fff}.bet-records>.form-error{margin:14px 16px}
+.bet-record-filters{display:grid;gap:12px;padding:13px 16px;border-bottom:1px solid #ece8f4}.bet-record-status,.bet-record-dates{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.bet-record-filters button{display:flex;align-items:center;gap:4px;font-size:12px;padding:7px 10px;border-radius:4px;background:#f4f1fa;color:#726782}.bet-record-filters button.active{background:#7655df;color:#fff}.bet-record-filters button:disabled{opacity:.4}.bet-record-dates label{display:grid;gap:5px;min-width:0;font-size:12px;color:#726782}.bet-record-dates input{box-sizing:border-box;min-width:0;max-width:100%;padding:6px;border:1px solid #e5deef;border-radius:4px;font:inherit;color:#30313b;background:#fff}.bet-record-dates p{flex-basis:100%;margin:0;font-size:12px}.bet-record-date-hint{color:#726782;line-height:1.6}.bet-records>.form-error{margin:14px 16px}
 @media(max-width:760px){.bet-records{min-height:100dvh}.bet-record-header{min-height:48px;padding:0 7px}.bet-record-header h1{font-size:18px}.bet-record-totals{padding:9px 12px;font-size:11px;gap:5px 10px}.bet-record-totals b{margin-left:4px}.bet-record{padding:17px 16px 19px;gap:9px 12px}.bet-record h2{font-size:15px}.bet-record dl{font-size:13px;gap:1px}.bet-record dl>div{grid-template-columns:57px minmax(0,1fr);gap:6px}.bet-record time{font-size:11px}.bet-record-result{font-size:14px}.bet-record-end{padding:22px 12px;font-size:13px}}
 @media(max-width:350px){.bet-record{padding-left:12px;padding-right:12px;column-gap:8px}.bet-record dl{font-size:12px}.bet-record dl>div{grid-template-columns:53px minmax(0,1fr);gap:5px}.bet-record time{font-size:10px}.bet-record-totals{column-gap:8px;font-size:10px}}
 </style>

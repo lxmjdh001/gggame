@@ -4,6 +4,7 @@ import {Search,RefreshCw,GitBranch,Maximize2,Minimize2} from 'lucide-vue-next'
 import {user,money} from '../api/account'
 import {loadAgents,type AgentPage} from '../api/agents'
 import AdminAgentNode from './AdminAgentNode.vue'
+import AdminAgentExport from './AdminAgentExport.vue'
 const query=ref(''),selected=ref(''),data=ref<AgentPage|null>(null),busy=ref(false),error=ref(''),revision=ref(0),compact=ref(true)
 const fullscreen=ref(false),viewer=ref<HTMLElement|null>(null)
 let previousFocus:HTMLElement|null=null,previousOverflow='',bodyLocked=false
@@ -18,7 +19,7 @@ function modalKeydown(event:KeyboardEvent){
  if(!fullscreen.value)return
  if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeFullscreen();return}
  if(event.key!=='Tab')return
- const elements=viewer.value?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),summary,[tabindex="0"]')
+ const elements=viewer.value?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),summary,[tabindex="0"]')
  if(!elements?.length)return
  const first=elements[0],last=elements[elements.length-1]
  if(event.shiftKey&&(document.activeElement===first||document.activeElement===viewer.value)){event.preventDefault();last?.focus()}
@@ -41,10 +42,10 @@ onUnmounted(()=>{generation++;restorePage()})
 <template>
  <Teleport to="body" :disabled="!fullscreen">
  <section ref="viewer" class="surface admin-agents" :class="{'agent-fullscreen':fullscreen}" :role="fullscreen?'dialog':undefined" :aria-modal="fullscreen?'true':undefined" :aria-labelledby="fullscreen?'agent-view-title':undefined" :tabindex="fullscreen?-1:undefined" @keydown="modalKeydown">
-  <header class="agent-toolbar"><div><h2 id="agent-view-title"><GitBranch :size="22"/>代理关系</h2><p>按邀请关系逐层展开，不限于佣金的三级范围。</p></div><div class="agent-view-actions"><button class="secondary-button" :disabled="busy" @click="load(data?.page??1)"><RefreshCw :size="15"/>刷新关系</button><button v-if="!fullscreen" class="secondary-button" @click="openFullscreen"><Maximize2 :size="15"/>全屏查看</button><button v-else class="secondary-button" @click="closeFullscreen"><Minimize2 :size="15"/>关闭全屏</button></div></header>
+  <header class="agent-toolbar"><div><h2 id="agent-view-title"><GitBranch :size="22"/>代理关系</h2><p>按邀请关系逐层展开，不限于佣金的三级范围。</p></div><div class="agent-view-actions"><AdminAgentExport :username="selected" :disabled="busy||!data"/><button class="secondary-button" :disabled="busy" @click="load(data?.page??1)"><RefreshCw :size="15"/>刷新关系</button><button v-if="!fullscreen" class="secondary-button" @click="openFullscreen"><Maximize2 :size="15"/>全屏查看</button><button v-else class="secondary-button" @click="closeFullscreen"><Minimize2 :size="15"/>关闭全屏</button></div></header>
   <form class="agent-search" @submit.prevent="focus(query.trim())"><label><Search :size="16"/><input v-model="query" maxlength="32" placeholder="输入完整会员账号" aria-label="查询代理账号"/></label><button class="primary-button" :disabled="busy">查询关系</button><button type="button" class="secondary-button" :disabled="busy" @click="reset">全部顶层</button></form>
   <div v-if="data" class="agent-daily"><span>{{data.day}} · {{selected?'当前团队':'全部团队'}}今日流水（含本人）</span><strong>{{money(data.today_stake_cents)}} 元</strong></div>
-  <details class="agent-definition"><summary>统计口径与操作说明</summary><p>点击用户名聚焦团队，点击上级返回；在“用户列表 → 更改上级”调整分组。充值为历史累计已审核充值＋正数后台充值，不含奖励，不随提现归零；下级数据不含本人。今日流水按北京时间当日未撤销投注累计，包含待开奖、已结算及停用会员，覆盖全部层级，不受分页限制。更改上级会同步团队归属；历史订单与佣金快照不变。</p></details>
+  <details class="agent-definition"><summary>统计口径与操作说明</summary><p>点击用户名聚焦团队，点击上级返回；在“用户列表 → 更改上级”调整分组。充值为历史累计已审核充值＋正数后台充值，不含奖励，不随提现归零；下级数据不含本人。今日流水按北京时间当日未撤销投注累计，包含待开奖、已结算及停用会员，覆盖全部层级，不受分页限制。更改上级会同步团队归属；历史订单与佣金快照不变。</p><p>选择 Excel 表格或关系图图片后点击导出：当前根账号及全部下级都会包含，“全部顶层”则导出全部团队，不受展开状态或分页影响。图片过大或浏览器无法生成 PNG 时，自动下载完整 SVG，可用浏览器打开并缩放。</p></details>
   <div class="agent-controls"><strong>{{selected?'当前根账号：'+selected:'全部顶层账号'}}<small v-if="data"> · 共{{data.total}}个</small></strong><label><input v-model="compact" type="checkbox"/>紧凑显示</label><span>可横向滚动查看展开的关系</span></div>
   <p v-if="busy" role="status">正在读取代理关系…</p>
   <div v-if="error" class="form-error" role="alert">{{error}} <button class="secondary-button" @click="load()">重新读取</button></div>

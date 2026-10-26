@@ -12,6 +12,7 @@ const pages=computed(()=>Math.max(1,Math.ceil(total.value/10)))
 const count=computed(()=>props.kind==='ledger'?ledger.value.length:props.kind==='transactions'?transactions.value.length:days.value.length)
 const title=computed(()=>({ledger:'账变记录',transactions:'交易记录',daily:'每日输赢'}[props.kind]))
 const walletLabel=(value:string)=>({deposit:'存款',withdraw:'提款',withdraw_hold:'提款冻结',withdraw_approved:'提款完成',withdraw_rejected:'提款解冻',deposit_approved:'存款入账'}[value]??labels[value]??value)
+const transactionLabel=(value:string)=>value==='deposit'?'充值':'提现'
 let version=0
 async function load(requested=page.value){
  const id=user.value?.id;if(!id)return
@@ -21,7 +22,7 @@ async function load(requested=page.value){
   const data=await api<RecordPage<Ledger|WalletRequest|DailyResult>>(`/account/${endpoint}?page=${requested}`)
   if(current!==version||user.value?.id!==id)return
   if(props.kind==='ledger')ledger.value=data.items as Ledger[]
-  else if(props.kind==='transactions')transactions.value=data.items as WalletRequest[]
+  else if(props.kind==='transactions')transactions.value=(data.items as WalletRequest[]).filter(item=>item.kind==='deposit'||item.kind==='withdraw')
   else days.value=data.items as DailyResult[]
   total.value=data.total;page.value=data.page
  }catch(e){if(current===version)error.value=(e as Error).message}
@@ -34,11 +35,12 @@ onUnmounted(()=>version++)
 <template>
  <section class="surface account-records" :aria-busy="loading">
   <h3>{{title}}<small>金额单位：元</small></h3>
+  <p v-if="kind==='transactions'" class="daily-rule">充值与提现记录</p>
   <p v-if="kind==='daily'" class="daily-rule">按北京时间投注日期汇总，净输赢＝已结算派彩－已结算投注；待结算及已撤销订单不计入。</p>
   <div v-if="error" class="form-error" role="alert">{{error}} <button type="button" class="text-button" @click="load()">重试</button></div>
   <p v-if="loading" class="loading-line" role="status">正在读取记录…</p>
   <div v-if="kind==='ledger'" class="record-cards ledger-records"><article v-for="entry in ledger" :key="entry.id"><div class="record-top"><strong>{{walletLabel(entry.kind)}}</strong><b :class="{positive:entry.amount_cents>0}">{{entry.amount_cents>0?'+':''}}{{money(entry.amount_cents)}}</b></div><time>{{datetime(entry.created_at)}}</time><p v-if="entry.note">{{entry.note}}</p><dl><div><dt>余额</dt><dd>{{money(entry.balance_cents)}}</dd></div><div><dt>提款冻结</dt><dd>{{money(entry.frozen_cents)}}</dd></div></dl></article></div>
-  <div v-else-if="kind==='transactions'" class="record-cards transaction-records"><article v-for="request in transactions" :key="request.id"><div class="record-top"><strong>{{walletLabel(request.kind)}} · {{money(request.amount_cents)}}</strong><span class="badge" :class="request.status">{{labels[request.status]||request.status}}</span></div><time>{{datetime(request.created_at)}}</time><PaymentRequestDetails v-if="request.withdrawal" :request="request"/><p v-if="request.payment_method==='usdt'&&!request.withdrawal">USDT {{request.usdt_amount}} · {{request.payment_network}}<br/>交易 ID：{{request.transaction_id}}</p><p v-if="request.payment_method!=='usdt'&&request.transaction_id">交易 ID：{{request.transaction_id}}</p><p v-if="request.review_note||request.note">{{request.review_note||request.note}}</p></article></div>
+  <div v-else-if="kind==='transactions'" class="record-cards transaction-records"><article v-for="request in transactions" :key="request.id"><div class="record-top"><strong>{{transactionLabel(request.kind)}} · {{money(request.amount_cents)}}</strong><span class="badge" :class="request.status">{{labels[request.status]||request.status}}</span></div><time>{{datetime(request.created_at)}}</time><PaymentRequestDetails v-if="request.withdrawal" :request="request"/><p v-if="request.payment_method==='usdt'&&!request.withdrawal">USDT {{request.usdt_amount}} · {{request.payment_network}}<br/>交易 ID：{{request.transaction_id}}</p><p v-if="request.payment_method!=='usdt'&&request.transaction_id">交易 ID：{{request.transaction_id}}</p><p v-if="request.review_note||request.note">{{request.review_note||request.note}}</p></article></div>
   <table v-else-if="days.length" class="daily-results"><thead><tr><th>日期</th><th>已结算投注</th><th>派彩</th><th>净输赢</th></tr></thead><tbody><tr v-for="day in days" :key="day.date"><th>{{day.date}}<small>{{day.orders}} 笔</small></th><td>{{money(day.stake_cents)}}</td><td>{{money(day.payout_cents)}}</td><td :class="{positive:day.net_cents>0,negative:day.net_cents<0}">{{day.net_cents>0?'+':''}}{{money(day.net_cents)}}</td></tr></tbody></table>
   <p v-if="!count&&!loading&&!error" class="empty-copy">{{kind==='daily'?'暂无已结算的输赢记录':'暂无记录'}}</p>
   <nav class="record-pagination" :aria-label="`${title}分页`"><span aria-live="polite">共 {{total}} {{kind==='daily'?'天':'条'}} · 第 {{page}} / {{pages}} 页</span><div><button :disabled="page<=1||loading" aria-label="记录上一页" @click="load(page-1)"><ChevronLeft :size="16"/>上一页</button><button :disabled="page>=pages||loading" aria-label="记录下一页" @click="load(page+1)">下一页<ChevronRight :size="16"/></button></div></nav>

@@ -43,6 +43,10 @@ func (s *Store) AgentTree(actor, username, parentID string, page int) (AgentPage
 	return s.agentTreeAt(actor, username, parentID, page, time.Now())
 }
 func (s *Store) agentTreeAt(actor, username, parentID string, page int, now time.Time) (AgentPage, error) {
+	return s.agentTreeSnapshot(actor, username, parentID, page, now, false)
+}
+
+func (s *Store) agentTreeSnapshot(actor, username, parentID string, page int, now time.Time, full bool) (AgentPage, error) {
 	out := AgentPage{Items: []AgentNode{}, PageSize: 20}
 	local := now.In(model.Beijing)
 	start := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, model.Beijing)
@@ -65,6 +69,9 @@ func (s *Store) agentTreeAt(actor, username, parentID string, page int, now time
 				return err
 			}
 			nodes[u.ID] = &AgentNode{ID: u.ID, Username: u.Username, Name: u.Name, Role: u.Role, Status: u.Status, CreatedAt: u.CreatedAt, InviterID: u.InviterID}
+			if u.Deleted {
+				nodes[u.ID].Status = "deleted"
+			}
 			byName[strings.ToLower(u.Username)] = u.ID
 			return nil
 		}); err != nil {
@@ -159,6 +166,19 @@ func (s *Store) agentTreeAt(actor, username, parentID string, page int, now time
 		out.Total = len(ids)
 		for _, id := range ids {
 			out.TodayStake += nodes[id].TodayStake + nodes[id].TeamTodayStake
+		}
+		if full {
+			// Iterative breadth-first traversal keeps every parent before its children.
+			queue := append([]string(nil), ids...)
+			for i := 0; i < len(queue); i++ {
+				id := queue[i]
+				out.Items = append(out.Items, *nodes[id])
+				next := children[id]
+				sort.Slice(next, func(i, j int) bool { return next[i] < next[j] })
+				queue = append(queue, next...)
+			}
+			out.Total = len(out.Items)
+			return nil
 		}
 		current, start, end := pageBounds(out.Total, page, out.PageSize)
 		out.Page = current

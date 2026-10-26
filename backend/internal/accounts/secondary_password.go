@@ -30,7 +30,14 @@ type SecondaryPasswordInput struct {
 }
 
 func secondaryPasswordValid(password string) bool {
-	return utf8.ValidString(password) && utf8.RuneCountInString(password) >= 6 && utf8.RuneCountInString(password) <= 12
+	length := utf8.RuneCountInString(password)
+	return utf8.ValidString(password) && length >= 1 && length <= 8
+}
+
+// Existing 9–12 rune secrets remain valid without changing their stored hashes.
+func secondarySecretValid(password string) bool {
+	length := utf8.RuneCountInString(password)
+	return utf8.ValidString(password) && length >= 1 && length <= 12
 }
 
 func secondaryLogin(tx *bolt.Tx, token string, now time.Time) (Login, storedUser, error) {
@@ -110,7 +117,7 @@ func (s *Store) checkSecondarySecret(u storedUser, password string) error {
 	if err := s.secondaryAttempt(u.ID); err != nil {
 		return err
 	}
-	if !secondaryPasswordValid(password) {
+	if !secondarySecretValid(password) {
 		return errors.New("二级密码不正确")
 	}
 	candidate, err := hash(password, u.SecondarySalt)
@@ -125,7 +132,7 @@ func (s *Store) checkSecondarySecret(u storedUser, password string) error {
 
 func (s *Store) SetSecondaryPassword(token string, in SecondaryPasswordInput) (SecondaryPasswordStatus, error) {
 	if !secondaryPasswordValid(in.NewPassword) {
-		return SecondaryPasswordStatus{}, errors.New("二级密码需6–12位，不要求大小写组合")
+		return SecondaryPasswordStatus{}, errors.New("二级密码需1–8个字符，不要求大小写组合")
 	}
 	if in.NewPassword != in.Confirmation {
 		return SecondaryPasswordStatus{}, errors.New("两次二级密码不一致")

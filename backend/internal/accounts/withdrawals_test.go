@@ -75,7 +75,7 @@ func TestWithdrawalGateFeeResetAndNewActivity(t *testing.T) {
 	if before.Required != 11000 || before.Remaining != 6000 {
 		t.Fatal(before)
 	}
-	edit := WagerEdit{Version: before.Version, Revision: before.Revision, Turnover: 11000, Note: "核实后调整打码", Key: randomID()}
+	edit := WagerEdit{Version: before.Version, Revision: before.Revision, Turnover: wagerValue(11000), Note: "核实后调整打码", Key: randomID()}
 	after, err := s.EditWagering("admin", "member", edit)
 	must(t, err)
 	if !after.Eligible {
@@ -224,14 +224,14 @@ func TestWithdrawalRefundedBetsGreenChannelAndStaleEdits(t *testing.T) {
 	if w.Turnover != 0 || w.Eligible {
 		t.Fatal(w)
 	}
-	stale := WagerEdit{Version: w.Version, Revision: w.Revision, Turnover: 10000, Note: "调整", Key: randomID()}
+	stale := WagerEdit{Version: w.Version, Revision: w.Revision, Turnover: wagerValue(10000), Note: "调整", Key: randomID()}
 	seedWager(t, s, 0, 0, 100)
 	if _, err = s.EditWagering("admin", "member", stale); err == nil {
 		t.Fatal("stale edit overwrote new wager")
 	}
 	w, err = s.Wagering("admin", "member")
 	must(t, err)
-	edit := WagerEdit{Version: w.Version, Revision: w.Revision, Turnover: 0, Green: true, Note: "开通绿色通道", Key: randomID()}
+	edit := WagerEdit{Version: w.Version, Revision: w.Revision, Turnover: wagerValue(0), Green: true, Note: "开通绿色通道", Key: randomID()}
 	if _, err = s.EditWagering("member", "member", edit); err != ErrForbidden {
 		t.Fatal("member edited turnover", err)
 	}
@@ -396,7 +396,7 @@ func TestWageringCompleteHistoryAndAdjustmentAfterCancellation(t *testing.T) {
 	if w.Turnover != 21000 || !w.Eligible {
 		t.Fatal("limited history or foreign/refunded wager counted", w)
 	}
-	_, e = s.EditWagering("admin", "member", WagerEdit{Version: w.Version, Revision: w.Revision, Turnover: 0, Note: "人工扣除打码", Key: randomID()})
+	_, e = s.EditWagering("admin", "member", WagerEdit{Version: w.Version, Revision: w.Revision, Turnover: wagerValue(0), Note: "人工扣除打码", Key: randomID()})
 	must(t, e)
 	must(t, s.db.Update(func(tx *bolt.Tx) error {
 		o, e := get[Order](tx, "orders", pending)

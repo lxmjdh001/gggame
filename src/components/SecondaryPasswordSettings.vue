@@ -2,7 +2,7 @@
 import {ref,watch,onUnmounted} from 'vue'
 import {ShieldCheck} from 'lucide-vue-next'
 import {api,user} from '../api/account'
-import {validSecondaryPassword,type SecondaryPasswordStatus} from '../lib/secondaryPassword'
+import {validSecondaryPassword,validSecondarySecret,type SecondaryPasswordStatus} from '../lib/secondaryPassword'
 const emit=defineEmits<{notify:[message:string]}>()
 const state=ref<SecondaryPasswordStatus|null>(null),loading=ref(true),busy=ref(false),error=ref('')
 const loginPassword=ref(''),currentPassword=ref(''),newPassword=ref(''),confirmation=ref('')
@@ -23,9 +23,10 @@ async function save(toggle=false){
  if(busy.value||!state.value)return
  const id=user.value?.id,ticket=generation,wasSet=state.value.is_set,enabled=state.value.enabled
  error.value=''
- if(!toggle&&!validSecondaryPassword(newPassword.value)){error.value='二级密码需6–12位，不要求大小写组合';return}
+ if(!toggle&&!validSecondaryPassword(newPassword.value)){error.value='二级密码需1–8个字符，不要求大小写组合';return}
  if(!toggle&&newPassword.value!==confirmation.value){error.value='两次二级密码不一致';return}
  if(wasSet&&!currentPassword.value){error.value='请输入当前二级密码';return}
+ if(wasSet&&!validSecondarySecret(currentPassword.value)){error.value='当前二级密码需1–8个字符，旧9–12字符密码可继续使用';return}
  if(!wasSet&&!loginPassword.value){error.value='首次设置请确认登录密码';return}
  busy.value=true
  try{
@@ -50,9 +51,10 @@ async function save(toggle=false){
      <label v-if="!state.is_set">登录密码<input v-model="loginPassword" type="password" required maxlength="128" autocomplete="current-password" placeholder="首次设置时确认身份"/></label>
      <label v-else>当前二级密码<input v-model="currentPassword" type="password" required maxlength="24" autocomplete="current-password" placeholder="修改密码或切换开关时填写"/></label>
      <div v-if="state.is_set" class="secondary-toggle"><span>进入游戏二级验证：{{state.enabled?'开启':'关闭'}}</span><button type="button" role="switch" :aria-checked="state.enabled" aria-label="进入游戏二级密码验证" :disabled="busy||!currentPassword" @click="save(true)">{{state.enabled?'关闭验证':'开启验证'}}</button></div>
-     <label>{{state.is_set?'新二级密码':'设置二级密码'}}<input v-model="newPassword" type="password" required maxlength="24" autocomplete="new-password" placeholder="6–12位，不要求大小写组合" aria-describedby="secondary-password-rule"/></label>
-     <label>确认二级密码<input v-model="confirmation" type="password" required maxlength="24" autocomplete="new-password" placeholder="请再次输入二级密码"/></label>
-     <small id="secondary-password-rule">6–12个字符，不要求大小写组合；验证时区分大小写。修改密码或重新开启后，需要重新验证。</small>
+     <!-- maxlength counts UTF-16 units; validation counts Unicode codepoints. -->
+     <label>{{state.is_set?'新二级密码':'设置二级密码'}}<input v-model="newPassword" type="password" required maxlength="16" autocomplete="new-password" placeholder="1–8个字符，不要求大小写组合" aria-describedby="secondary-password-rule"/></label>
+     <label>确认二级密码<input v-model="confirmation" type="password" required maxlength="16" autocomplete="new-password" placeholder="请再次输入二级密码"/></label>
+     <small id="secondary-password-rule">新二级密码为1–8个字符，不要求大小写组合；验证时区分大小写，旧9–12字符密码可继续验证。修改密码或重新开启后，需要重新验证。</small>
      <button class="primary-button" type="submit" :disabled="busy">{{busy?'正在保存…':state.is_set?'保存新二级密码':'设置并开启二级密码'}}</button>
     </fieldset>
    </form>

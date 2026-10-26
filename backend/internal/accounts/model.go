@@ -18,6 +18,7 @@ type User struct {
 	Username                 string    `json:"username"`
 	Role                     string    `json:"role"`
 	Status                   string    `json:"status"`
+	Deleted                  bool      `json:"deleted,omitempty"`
 	InviteCode               string    `json:"invite_code"`
 	InviterID                string    `json:"inviter_id,omitempty"`
 	Balance                  int64     `json:"balance_cents"`
@@ -26,6 +27,7 @@ type User struct {
 }
 type storedUser struct {
 	User
+	DeletionRevision   string `json:",omitempty"`
 	SecondaryHash      string
 	SecondarySalt      string
 	SecondaryRevision  string

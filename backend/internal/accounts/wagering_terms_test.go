@@ -35,7 +35,7 @@ func TestWagerAmountAndTurnoverRemainSeparateAcrossCycles(t *testing.T) {
 		beforeOrders, e = list[Order](tx, "orders")
 		return e
 	}))
-	edit := WagerEdit{Version: w.Version, Revision: w.Revision, Turnover: 71000, Note: "核实后调整打码流水", Key: randomID()}
+	edit := WagerEdit{Version: w.Version, Revision: w.Revision, Turnover: wagerValue(71000), Note: "核实后调整打码流水", Key: randomID()}
 	w, err = s.EditWagering("admin", "member", edit)
 	must(t, err)
 	if w.Required != 62000 || w.Deposit != 60000 || w.Reward != 2000 || w.Turnover != 71000 || !w.Eligible {
@@ -96,7 +96,7 @@ func TestWagerAmountAndTurnoverRemainSeparateAcrossCycles(t *testing.T) {
 	}
 }
 
-func TestWagerEditCannotSetRequiredAmountOverHTTP(t *testing.T) {
+func TestWagerEditCanSetRequiredAmountOverHTTP(t *testing.T) {
 	s, _ := withdrawalFixture(t)
 	defer s.Close()
 	seedWager(t, s, 50000, 1000, 20000)
@@ -104,7 +104,7 @@ func TestWagerEditCannotSetRequiredAmountOverHTTP(t *testing.T) {
 	must(t, err)
 	var token string
 	must(t, s.db.Update(func(tx *bolt.Tx) error { var e error; token, e = newLogin(tx, "admin"); return e }))
-	body, err := json.Marshal(map[string]any{"version": w.Version, "revision": w.Revision, "turnover_cents": 52000, "required_cents": 0, "note": "不能修改打码量", "key": randomID()})
+	body, err := json.Marshal(map[string]any{"version": w.Version, "revision": w.Revision, "required_cents": 0, "note": "核实后调整打码量", "key": randomID()})
 	must(t, err)
 	h := &HTTP{Store: s}
 	mux := http.NewServeMux()
@@ -114,13 +114,13 @@ func TestWagerEditCannotSetRequiredAmountOverHTTP(t *testing.T) {
 	r.AddCookie(&http.Cookie{Name: "starlight_session", Value: token})
 	response := httptest.NewRecorder()
 	h.Protect(mux).ServeHTTP(response, r)
-	if response.Code != http.StatusBadRequest {
-		t.Fatalf("required_cents must be rejected: %d %s", response.Code, response.Body)
+	if response.Code != http.StatusOK {
+		t.Fatalf("required_cents should be accepted: %d %s", response.Code, response.Body)
 	}
 	after, err := s.Wagering("admin", "member")
 	must(t, err)
-	if after.Required != w.Required || after.Turnover != w.Turnover || after.Revision != w.Revision {
-		t.Fatal("rejected request changed wagering", after)
+	if after.Required != 0 || after.Turnover != w.Turnover || after.Deposit != w.Deposit || after.Reward != w.Reward || after.Revision == w.Revision {
+		t.Fatal("required edit changed turnover or original credits", after)
 	}
 }
 

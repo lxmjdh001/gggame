@@ -36,9 +36,11 @@ type wagerState struct {
 	Consumed wagerCutoff
 }
 type wagerAdjustment struct {
-	UserID       string
-	Delta        int64
-	OrderThrough string
+	UserID        string
+	Delta         int64
+	OrderThrough  string
+	RequiredDelta int64  `json:",omitempty"`
+	LedgerThrough string `json:",omitempty"`
 }
 type Wagering struct {
 	Revision  string `json:"revision"`
@@ -55,10 +57,11 @@ type Wagering struct {
 type WagerEdit struct {
 	Revision string `json:"revision"`
 	Version  int64  `json:"version"`
-	Turnover int64  `json:"turnover_cents"`
+	Turnover *int64 `json:"turnover_cents,omitempty"`
 	Green    bool   `json:"green_channel"`
 	Note     string `json:"note"`
 	Key      string `json:"key"`
+	Required *int64 `json:"required_cents,omitempty"`
 }
 
 func initializeWithdrawals(tx *bolt.Tx) error {
@@ -199,6 +202,11 @@ func wagering(tx *bolt.Tx, id string, cutoff *wagerCutoff) (Wagering, error) {
 	if cutoff != nil {
 		bound = *cutoff
 	}
+	type wagerCredit struct {
+		ID     string
+		Amount int64
+	}
+	credits := []wagerCredit{}
 	err = tx.Bucket([]byte("ledger")).ForEach(func(k, v []byte) error {
 		if !inWagerRange(string(k), state.Consumed.Ledger, bound.Ledger, cutoff != nil) {
 			return nil
@@ -218,7 +226,10 @@ func wagering(tx *bolt.Tx, id string, cutoff *wagerCutoff) (Wagering, error) {
 			out.Deposit += l.Amount
 		case "registration_bonus", "promotion_bonus", "deposit_bonus", "reward", "admin_reward":
 			out.Reward += l.Amount
+		default:
+			return nil
 		}
+		credits = append(credits, wagerCredit{string(k), l.Amount})
 		return nil
 	})
 	if err != nil {
@@ -245,7 +256,7 @@ func wagering(tx *bolt.Tx, id string, cutoff *wagerCutoff) (Wagering, error) {
 	if err != nil {
 		return out, err
 	}
-	index := 0
+	index, creditIndex := 0, 0
 	err = tx.Bucket([]byte("wager_adjustments")).ForEach(func(k, v []byte) error {
 		if !inWagerRange(string(k), state.Consumed.Adjustments, bound.Adjustments, cutoff != nil) {
 			return nil
@@ -262,6 +273,14 @@ func wagering(tx *bolt.Tx, id string, cutoff *wagerCutoff) (Wagering, error) {
 			index++
 		}
 		out.raw = max(0, out.raw+a.Delta)
+		// Apply the required amount at its original ledger position. In
+		// particular, an old negative adjustment must never eat credits that
+		// arrived after a reset, including after an older withdrawal is approved.
+		for creditIndex < len(credits) && credits[creditIndex].ID <= a.LedgerThrough {
+			out.Required += credits[creditIndex].Amount
+			creditIndex++
+		}
+		out.Required = max(0, out.Required+a.RequiredDelta)
 		return nil
 	})
 	if err != nil {
@@ -270,11 +289,13 @@ func wagering(tx *bolt.Tx, id string, cutoff *wagerCutoff) (Wagering, error) {
 	for ; index < len(orders); index++ {
 		out.raw += orders[index].Cost
 	}
-	out.Revision = fmt.Sprintf("%d:%d:%d:%d", state.Version, out.Deposit, out.Reward, out.raw)
-	out.Required = out.Deposit + out.Reward
+	for ; creditIndex < len(credits); creditIndex++ {
+		out.Required += credits[creditIndex].Amount
+	}
+	out.Revision = fmt.Sprintf("%d:%d:%d:%d:%d", state.Version, out.Deposit, out.Reward, out.raw, out.Required)
 	out.Turnover = max(0, out.raw)
 	out.Remaining = max(0, out.Required-out.Turnover)
-	// 打码量 = Required (充值＋奖励); 打码流水 = Turnover (投注＋人工流水调整).
+	// Required includes recharge/reward and explicit administrator adjustments.
 	// Equality qualifies; approval consumes only the submission's saved cutoff.
 	out.Eligible = out.Green || out.Remaining == 0
 	return out, nil
@@ -298,8 +319,13 @@ func (s *Store) Wagering(actor, id string) (Wagering, error) {
 }
 func (s *Store) EditWagering(actor, id string, in WagerEdit) (Wagering, error) {
 	var out Wagering
-	if in.Turnover < 0 || in.Turnover > maxMoney || len(strings.TrimSpace(in.Note)) < 2 || len(in.Note) > 500 {
-		return out, errors.New("请填写有效打码流水和调整原因")
+	if (in.Turnover != nil && (*in.Turnover < 0 || *in.Turnover > maxMoney)) ||
+		(in.Required != nil && (*in.Required < 0 || *in.Required > maxMoney)) ||
+		len(strings.TrimSpace(in.Note)) < 2 || len(in.Note) > 500 {
+		return out, errors.New("请填写有效打码量、打码流水和调整原因")
+	}
+	if in.Turnover != nil && *in.Turnover == 0 && in.Required != nil && *in.Required != 0 {
+		return out, errors.New("打码流水设为0时，打码量必须同时清零")
 	}
 	body := struct {
 		ID   string
@@ -320,6 +346,13 @@ func (s *Store) EditWagering(actor, id string, in WagerEdit) (Wagering, error) {
 			out, err = get[Wagering](tx, "wager_edits", ref)
 			return err
 		}
+		member, err := get[storedUser](tx, "users", id)
+		if err != nil {
+			return err
+		}
+		if member.Deleted {
+			return errors.New("会员已删除，请先恢复账号后调整打码")
+		}
 		before, err := wagering(tx, id, nil)
 		if err != nil {
 			return err
@@ -332,8 +365,21 @@ func (s *Store) EditWagering(actor, id string, in WagerEdit) (Wagering, error) {
 			return err
 		}
 		state.Version++
+		if state.Version <= before.Version {
+			return errors.New("打码设置版本已达上限")
+		}
 		state.Green = in.Green
-		if err = put(tx, "wager_adjustments", seq(tx, "wager_adjustments"), wagerAdjustment{UserID: id, Delta: in.Turnover - before.raw, OrderThrough: lastKey(tx, "orders")}); err != nil {
+		turnover, required := before.Turnover, before.Required
+		if in.Turnover != nil {
+			turnover = *in.Turnover
+		}
+		if in.Required != nil {
+			required = *in.Required
+		}
+		if in.Turnover != nil && turnover == 0 {
+			required = 0
+		}
+		if err = put(tx, "wager_adjustments", seq(tx, "wager_adjustments"), wagerAdjustment{UserID: id, Delta: turnover - before.raw, OrderThrough: lastKey(tx, "orders"), RequiredDelta: required - before.Required, LedgerThrough: lastKey(tx, "ledger")}); err != nil {
 			return err
 		}
 		if err = put(tx, "wager_states", id, state); err != nil {

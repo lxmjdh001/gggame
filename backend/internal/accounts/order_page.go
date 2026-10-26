@@ -4,6 +4,9 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
+
+	"starlight/gameapi/pkg/model"
 
 	bolt "go.etcd.io/bbolt"
 )
@@ -59,13 +62,46 @@ func orderResultStatus(o Order) string {
 }
 
 func (s *Store) OrdersPageFiltered(id string, page int, status string) (OrderPage, error) {
+	return s.OrdersPageRange(id, page, status, "", "")
+}
+
+// orderDate parses a strict calendar date independently of the server's local timezone.
+func orderDate(value string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, nil
+	}
+	day, err := time.ParseInLocation("2006-01-02", value, model.Beijing)
+	if err != nil || len(value) != 10 || day.Year() < 1 || day.Format("2006-01-02") != value {
+		return time.Time{}, errors.New("投注日期不正确，请使用有效的YYYY-MM-DD日期")
+	}
+	return day, nil
+}
+
+// OrdersPageRange filters the full member history by status and Beijing creation
+// dates before summarizing and paginating. Either date may be omitted; the end
+// date includes its entire day, implemented as an exclusive next-day boundary.
+func (s *Store) OrdersPageRange(id string, page int, status, startDate, endDate string) (OrderPage, error) {
 	out := OrderPage{Items: []Order{}, PageSize: orderPageSize}
 	switch status {
 	case "", "pending", "win", "lose", "push", "refunded":
 	default:
 		return out, errors.New("投注状态不正确")
 	}
-	err := s.db.View(func(tx *bolt.Tx) error {
+	start, err := orderDate(startDate)
+	if err != nil {
+		return out, err
+	}
+	end, err := orderDate(endDate)
+	if err != nil {
+		return out, err
+	}
+	if startDate != "" && endDate != "" && start.After(end) {
+		return out, errors.New("开始日期不能晚于结束日期")
+	}
+	if endDate != "" {
+		end = end.AddDate(0, 0, 1)
+	}
+	err = s.db.View(func(tx *bolt.Tx) error {
 		if _, err := active(tx, id); err != nil {
 			return err
 		}
@@ -75,7 +111,12 @@ func (s *Store) OrdersPageFiltered(id string, page int, status string) (OrderPag
 		}
 		own := []Order{}
 		for _, o := range orders {
-			if o.UserID == id && (status == "" || orderResultStatus(o) == status) {
+			// Undated legacy records have no calendar day to match a date filter.
+			if (startDate != "" || endDate != "") && o.CreatedAt.IsZero() {
+				continue
+			}
+			if o.UserID == id && (status == "" || orderResultStatus(o) == status) &&
+				(startDate == "" || !o.CreatedAt.Before(start)) && (endDate == "" || o.CreatedAt.Before(end)) {
 				own = append(own, o)
 				out.TotalStake += o.Cost
 				// Withdrawn stakes are refunds, not prize payouts.

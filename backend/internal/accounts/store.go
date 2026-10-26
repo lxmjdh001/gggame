@@ -310,7 +310,7 @@ func createUser(tx *bolt.Tx, username, h, salt, invite, role, phone, name string
 			return User{}, errors.New("邀请码不存在")
 		}
 		u, e := get[storedUser](tx, "users", inviter)
-		if e != nil || u.Status != "active" {
+		if e != nil || u.Status != "active" || u.Deleted {
 			return User{}, errors.New("邀请人账户不可用")
 		}
 	}
@@ -461,7 +461,7 @@ func active(tx *bolt.Tx, id string) (storedUser, error) {
 	if e != nil {
 		return u, ErrUnauthorized
 	}
-	if u.Status != "active" {
+	if u.Status != "active" || u.Deleted {
 		return u, ErrForbidden
 	}
 	return u, nil
@@ -626,6 +626,9 @@ func (s *Store) SetStatus(actor, id, status string) error {
 		if u.Role == "admin" {
 			return errors.New("不能在用户列表停用管理员")
 		}
+		if u.Deleted {
+			return errors.New("会员已删除，请先在已删除列表恢复账号")
+		}
 		u.Status = status
 		if e = put(tx, "users", id, u); e != nil {
 			return e
@@ -701,6 +704,9 @@ func (s *Store) adjust(actor, id string, amount int64, note, key, kind string) e
 		u, e := get[storedUser](tx, "users", id)
 		if e != nil {
 			return e
+		}
+		if u.Deleted {
+			return errors.New("会员已删除，请先恢复账号后调整余额")
 		}
 		ref = randomID()
 		if e = ledger(tx, &u, amount, 0, kind, ref, note); e != nil {

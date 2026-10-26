@@ -8,7 +8,13 @@ export interface SecondaryPasswordStatus {
 
 export function validSecondaryPassword(password:string):boolean {
  const length=Array.from(password).length
- return length>=6&&length<=12
+ return length>=1&&length<=8
+}
+
+// Existing 9–12 codepoint secrets remain valid for verification and settings changes.
+export function validSecondarySecret(password:string):boolean {
+ const length=Array.from(password).length
+ return length>=1&&length<=12
 }
 
 // Use the server's clock and fixed expiry. Polling/navigation must not renew it.

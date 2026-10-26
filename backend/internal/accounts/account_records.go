@@ -14,7 +14,7 @@ type AccountRecordPage[T any] struct {
 	PageSize int `json:"page_size"`
 }
 
-func accountRecordsPage[T any](s *Store, id string, page int, bucket string, owner func(T) string, display func(T) T) (AccountRecordPage[T], error) {
+func accountRecordsPage[T any](s *Store, id string, page int, bucket string, owner func(T) string, display func(T) T, include func(T) bool) (AccountRecordPage[T], error) {
 	out := AccountRecordPage[T]{Items: []T{}, PageSize: orderPageSize}
 	err := s.db.View(func(tx *bolt.Tx) error {
 		if _, err := active(tx, id); err != nil {
@@ -26,7 +26,7 @@ func accountRecordsPage[T any](s *Store, id string, page int, bucket string, own
 		}
 		own := []T{}
 		for _, v := range all {
-			if owner(v) == id {
+			if owner(v) == id && (include == nil || include(v)) {
 				if display != nil {
 					v = display(v)
 				}
@@ -42,10 +42,10 @@ func accountRecordsPage[T any](s *Store, id string, page int, bucket string, own
 	return out, err
 }
 func (s *Store) LedgerPage(id string, page int) (AccountRecordPage[Ledger], error) {
-	return accountRecordsPage(s, id, page, "ledger", func(v Ledger) string { return v.UserID }, ledgerForDisplay)
+	return accountRecordsPage(s, id, page, "ledger", func(v Ledger) string { return v.UserID }, ledgerForDisplay, nil)
 }
 func (s *Store) TransactionsPage(id string, page int) (AccountRecordPage[WalletRequest], error) {
-	return accountRecordsPage(s, id, page, "requests", func(v WalletRequest) string { return v.UserID }, nil)
+	return accountRecordsPage(s, id, page, "requests", func(v WalletRequest) string { return v.UserID }, nil, func(v WalletRequest) bool { return v.Kind == "deposit" || v.Kind == "withdraw" })
 }
 
 type DailyResult struct {

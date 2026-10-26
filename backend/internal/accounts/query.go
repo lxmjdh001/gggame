@@ -177,7 +177,7 @@ func (s *Store) AdminData(actor, resource, query string, page int) (map[string]a
 			return query == "" || strings.Contains(strings.ToLower(strings.Join(values, " ")), strings.ToLower(query))
 		}
 		switch resource {
-		case "users":
+		case "users", "deleted-users":
 			v, e := list[storedUser](tx, "users")
 			if e != nil {
 				return e
@@ -194,6 +194,9 @@ func (s *Store) AdminData(actor, resource, query string, page int) (map[string]a
 			}
 			sort.Slice(v, func(i, j int) bool { return v[i].CreatedAt.After(v[j].CreatedAt) })
 			for _, x := range v {
+				if x.Deleted != (resource == "deleted-users") {
+					continue
+				}
 				if match(x.Username, x.ID, x.InviteCode, x.Phone, x.Name) {
 					if x.InviterID != "" {
 						parent, err := get[storedUser](tx, "users", x.InviterID)

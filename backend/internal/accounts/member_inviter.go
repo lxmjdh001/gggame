@@ -78,7 +78,7 @@ func memberInviterSnapshot(tx *bolt.Tx, actor, id string, change *MemberInviterI
 		if !ok {
 			return state, errors.New("新上级账号不存在")
 		}
-		if parent.Status != "active" {
+		if parent.Status != "active" || parent.Deleted {
 			return state, errors.New("新上级账号已停用")
 		}
 		if seen[newID] {

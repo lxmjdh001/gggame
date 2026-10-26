@@ -58,20 +58,97 @@ func TestSecondaryPasswordLengthAndNoCaseCompositionRequirement(t *testing.T) {
 	for _, v := range []struct {
 		value string
 		valid bool
-	}{{"12345", false}, {"123456", true}, {"abcdefghijkl", true}, {"ABCDEFGHIJKL", true}, {"1234567890123", false}, {"密码六位测试", true}, {"😀😀😀😀😀😀", true}, {string([]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}), false}} {
+	}{{"", false}, {"1", true}, {"a", true}, {"A", true}, {" ", true}, {"12345678", true}, {"abcdefgh", true}, {"ABCDEFGH", true}, {"123456789", false}, {"abcdefghijkl", false}, {"1234567890123", false}, {"密码六位测试", true}, {strings.Repeat("😀", 8), true}, {strings.Repeat("😀", 9), false}, {string([]byte{0xff}), false}} {
 		if secondaryPasswordValid(v.value) != v.valid {
 			t.Fatalf("wrong secondary length policy %q", v.value)
 		}
 	}
+	for _, password := range []string{"", "a", strings.Repeat("a", 8), strings.Repeat("a", 9), strings.Repeat("a", 10), strings.Repeat("a", 11), strings.Repeat("a", 12), strings.Repeat("a", 13), strings.Repeat("😀", 12), strings.Repeat("😀", 13), string([]byte{0xff})} {
+		length := len([]rune(password))
+		want := password != string([]byte{0xff}) && length >= 1 && length <= 12
+		if secondarySecretValid(password) != want {
+			t.Fatalf("wrong existing secret policy %q", password)
+		}
+	}
 	s, _, token := secondaryFixture(t)
 	beforeSecondary := ""
-	for _, password := range []string{"123456", "abcdefghijkl", "ABCDEFGHIJKL", "密码六位测试"} {
+	for _, password := range []string{"1", "abcdefgh", "ABCDEFGH", "密码六位测试", strings.Repeat("😀", 8), " "} {
 		in := SecondaryPasswordInput{LoginPassword: secondaryTestLogin, CurrentPassword: beforeSecondary, NewPassword: password, Confirmation: password}
 		_, err := s.SetSecondaryPassword(token, in)
 		must(t, err)
 		_, err = s.VerifySecondaryPassword(token, password)
 		must(t, err)
 		beforeSecondary = password
+	}
+}
+
+// Seed a legacy hash directly: current setup must never create a 9–12 rune secret.
+func secondaryLegacyHashFixture(t *testing.T, s *Store, secret string) {
+	t.Helper()
+	salt := "legacy-secondary-salt"
+	encoded, err := hash(secret, salt)
+	must(t, err)
+	must(t, s.db.Update(func(tx *bolt.Tx) error {
+		u, err := get[storedUser](tx, "users", "member")
+		if err != nil {
+			return err
+		}
+		u.SecondaryHash, u.SecondarySalt, u.SecondaryRevision = encoded, salt, "legacy-secondary-revision"
+		u.SecondaryPasswordSet, u.SecondaryPasswordEnabled = true, true
+		return put(tx, "users", u.ID, u)
+	}))
+}
+
+func TestSecondaryPasswordLegacyHashesVerifyToggleAndChangeShorter(t *testing.T) {
+	for _, secret := range []string{"Abcdefghi", "Abcdefghij", "Abcdefghijk", "Abcdefghijkl", strings.Repeat("😀", 12)} {
+		t.Run(secret, func(t *testing.T) {
+			s, _, token := secondaryFixture(t)
+			secondaryLegacyHashFixture(t, s, secret)
+			before := managementStored(t, s, "member")
+			wrongSecrets := []string{string([]rune(secret)[:8])}
+			if lower := strings.ToLower(secret); lower != secret {
+				wrongSecrets = append(wrongSecrets, lower)
+			}
+			for _, wrong := range wrongSecrets {
+				if _, err := s.VerifySecondaryPassword(token, wrong); err == nil {
+					t.Fatal("legacy secret truncated or compared incorrectly")
+				}
+			}
+			state, err := s.VerifySecondaryPassword(token, secret)
+			must(t, err)
+			if state.VerificationRequired || !reflect.DeepEqual(before, managementStored(t, s, "member")) {
+				t.Fatal("legacy verification changed stored credentials or did not grant access")
+			}
+			for _, enabled := range []bool{false, true} {
+				state, err = s.ToggleSecondaryPassword(token, secret, enabled)
+				must(t, err)
+				after := managementStored(t, s, "member")
+				if state.Enabled != enabled || state.VerificationRequired != enabled || after.SecondaryHash != before.SecondaryHash || after.SecondarySalt != before.SecondarySalt {
+					t.Fatal("legacy toggle changed the secret or retained an old grant")
+				}
+			}
+			before = managementStored(t, s, "member")
+			for _, invalid := range []string{"", "123456789", "123456789012", strings.Repeat("😀", 9)} {
+				if _, err = s.SetSecondaryPassword(token, SecondaryPasswordInput{CurrentPassword: secret, NewPassword: invalid, Confirmation: invalid}); err == nil {
+					t.Fatal("accepted invalid replacement", invalid)
+				}
+				if !reflect.DeepEqual(before, managementStored(t, s, "member")) {
+					t.Fatal("rejected replacement changed legacy account")
+				}
+			}
+			state, err = s.SetSecondaryPassword(token, SecondaryPasswordInput{CurrentPassword: secret, NewPassword: "A", Confirmation: "A"})
+			must(t, err)
+			if !state.VerificationRequired {
+				t.Fatal("replacement reused prior grant")
+			}
+			for _, wrong := range []string{secret, "a"} {
+				if _, err = s.VerifySecondaryPassword(token, wrong); err == nil {
+					t.Fatal("old or case-mismatched secret accepted")
+				}
+			}
+			_, err = s.VerifySecondaryPassword(token, "A")
+			must(t, err)
+		})
 	}
 }
 
@@ -86,7 +163,9 @@ func TestSecondaryPasswordSetupToggleAndDataIsolation(t *testing.T) {
 	}
 	for _, in := range []SecondaryPasswordInput{
 		{LoginPassword: "wrong", NewPassword: "123456", Confirmation: "123456"},
-		{LoginPassword: secondaryTestLogin, NewPassword: "12345", Confirmation: "12345"},
+		{LoginPassword: secondaryTestLogin, NewPassword: "", Confirmation: ""},
+		{LoginPassword: secondaryTestLogin, NewPassword: "123456789", Confirmation: "123456789"},
+		{LoginPassword: secondaryTestLogin, NewPassword: "123456789012", Confirmation: "123456789012"},
 		{LoginPassword: secondaryTestLogin, NewPassword: "123456", Confirmation: "654321"},
 	} {
 		if _, err = s.SetSecondaryPassword(token, in); err == nil {
@@ -114,14 +193,14 @@ func TestSecondaryPasswordSetupToggleAndDataIsolation(t *testing.T) {
 	if state.Enabled || state.VerificationRequired || !state.IsSet {
 		t.Fatal("disable did not preserve password", state)
 	}
-	_, err = s.SetSecondaryPassword(token, SecondaryPasswordInput{LoginPassword: secondaryTestLogin, CurrentPassword: secondaryTestSecret, NewPassword: "123456789012", Confirmation: "123456789012"})
+	_, err = s.SetSecondaryPassword(token, SecondaryPasswordInput{LoginPassword: secondaryTestLogin, CurrentPassword: secondaryTestSecret, NewPassword: "12345678", Confirmation: "12345678"})
 	must(t, err)
 	state, err = s.SecondaryPasswordStatus(token)
 	must(t, err)
 	if state.Enabled {
 		t.Fatal("changing a disabled password unexpectedly enabled it")
 	}
-	state, err = s.ToggleSecondaryPassword(token, "123456789012", true)
+	state, err = s.ToggleSecondaryPassword(token, "12345678", true)
 	must(t, err)
 	if !state.VerificationRequired {
 		t.Fatal("re-enable reused previous verification")

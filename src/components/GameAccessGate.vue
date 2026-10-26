@@ -2,7 +2,7 @@
 import {ref,watch,onMounted,onUnmounted} from 'vue'
 import {ShieldCheck,ChevronLeft} from 'lucide-vue-next'
 import {api,user,authReady,gameAccessChallenge} from '../api/account'
-import {validSecondaryPassword,gameAccessTTL,type SecondaryPasswordStatus} from '../lib/secondaryPassword'
+import {validSecondarySecret,gameAccessTTL,type SecondaryPasswordStatus} from '../lib/secondaryPassword'
 defineProps<{pending?:boolean}>()
 const emit=defineEmits<{back:[]}>()
 const state=ref<SecondaryPasswordStatus|null>(null),unlocked=ref(false),hasEntered=ref(false),checking=ref(true),busy=ref(false),error=ref(''),password=ref('')
@@ -27,7 +27,7 @@ async function check(){
 watch([authReady,()=>user.value?.id,()=>user.value?.secondary_password_enabled,()=>user.value?.secondary_password_set,gameAccessChallenge],()=>{generation++;lock();password.value='';error.value='';void check()},{immediate:true})
 async function verify(){
  if(busy.value)return
- if(!validSecondaryPassword(password.value)){error.value='请输入6–12位二级密码';return}
+ if(!validSecondarySecret(password.value)){error.value='请输入1–8个字符的二级密码，旧9–12字符密码可继续验证';return}
  const id=user.value?.id,ticket=++generation,started=performance.now()
  busy.value=true;error.value=''
  try{const next=await api<SecondaryPasswordStatus>('/auth/secondary-password/verify','POST',{password:password.value});if(ticket===generation&&user.value?.id===id)apply(next,performance.now()-started)}
@@ -49,7 +49,7 @@ onUnmounted(()=>{mounted=false;generation++;clearTimeout(deadline);clearInterval
    <p>每次登录后首次进入游戏、北京时间跨天或验证满1小时，需重新验证。同一次登录内各游戏共用时效。</p>
    <div v-if="error" class="form-error" role="alert">{{error}}</div>
    <form v-if="!checking&&state?.enabled" class="form-stack" @submit.prevent="verify">
-    <label>二级密码<input v-model="password" aria-label="二级密码" type="password" required maxlength="24" autocomplete="current-password" placeholder="请输入6–12位二级密码" :disabled="busy"/></label>
+    <label>二级密码<input v-model="password" aria-label="二级密码" type="password" required maxlength="24" autocomplete="current-password" placeholder="请输入二级密码（1–8字符，兼容旧9–12字符）" :disabled="busy"/></label>
     <button class="primary-button" type="submit" :disabled="busy">{{busy?'正在验证…':'验证并进入游戏'}}</button>
    </form>
    <button v-if="!checking" type="button" class="secondary-button" :disabled="busy" @click="check">重新检查验证状态</button>

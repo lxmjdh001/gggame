@@ -17,9 +17,16 @@ const locked=()=>({is_set:true,enabled:true,verification_required:true,server_ti
 const granted=(ttl=3600000)=>({...locked(),verification_required:false,verified_until:new Date(Date.now()+ttl).toISOString()})
 const settle=async()=>{await nextTick();await new Promise(resolve=>setImmediate(resolve));await nextTick()}
 
-test('secondary password accepts 6–12 characters with no case composition rule',()=>{
- for(const value of ['123456','abcdef','ABCDEF','abcdefghijkl','密码六位测试','😀'.repeat(12)])assert.equal(helper.validSecondaryPassword(value),true,value)
- for(const value of ['', '12345','a'.repeat(13),'😀'.repeat(13)])assert.equal(helper.validSecondaryPassword(value),false,value)
+test('new secondary passwords accept 1–8 codepoints and existing secrets accept 1–12',()=>{
+ for(const length of [0,1,5,6,7,8,9,10,11,12,13]){
+  for(const unit of ['a','A','1','密','😀']){
+   const value=unit.repeat(length)
+   assert.equal(helper.validSecondaryPassword(value),length>=1&&length<=8,value)
+   assert.equal(helper.validSecondarySecret(value),length>=1&&length<=12,value)
+  }
+ }
+ for(const value of [' ',' a ','A😀密码1234','e\u0301'.repeat(4)])assert.equal(helper.validSecondaryPassword(value),true,value)
+ assert.equal(helper.validSecondaryPassword('e\u0301'.repeat(5)),false,'count codepoints, not grapheme clusters')
 })
 
 test('grant TTL uses server clock, fails closed, and never extends beyond an hour',()=>{
@@ -49,6 +56,28 @@ function gateHarness(reply){
  mount.forEach(f=>f())
  return {state,account,timers,intervals,listeners,close(){unmount.forEach(f=>f());stops.forEach(f=>f())}}
 }
+
+test('gate transmits short and legacy secrets intact and rejects empty or overlong values',async()=>{
+ const requests=[]
+ const h=gateHarness(async(path,method,body)=>{
+  if(path.endsWith('/verify')){requests.push(body.password);return granted()}
+  return locked()
+ })
+ try{
+  await settle()
+  for(const value of ['A',' ', '12345678',...Array.from({length:4},(_,i)=>'A'.repeat(i+9)),'😀'.repeat(12)]){
+   h.state.password.value=value;await h.state.verify()
+   assert.equal(requests.at(-1),value)
+   assert.equal(h.state.unlocked.value,true)
+  }
+  const count=requests.length
+  for(const value of ['', 'a'.repeat(13),'😀'.repeat(13)]){
+   h.state.password.value=value;await h.state.verify()
+   assert.match(h.state.error.value,/1–8/)
+   assert.equal(requests.length,count)
+  }
+ }finally{h.close()}
+})
 
 test('first entry is locked; verification unlocks; hourly expiry preserves mounted order state',async()=>{
  let status=locked()
@@ -142,7 +171,9 @@ test('first setup validates confirmation, login proof and length before submissi
  try{
   await settle()
   const s=h.state
-  s.newPassword.value='12345';s.confirmation.value='12345';await s.save();assert.match(s.error.value,/6–12/)
+  for(const value of ['', '123456789','123456789012','😀'.repeat(9)]){
+   s.newPassword.value=value;s.confirmation.value=value;await s.save();assert.match(s.error.value,/1–8/)
+  }
   s.newPassword.value='123456';s.confirmation.value='654321';await s.save();assert.match(s.error.value,/不一致/)
   s.confirmation.value='123456';await s.save();assert.match(s.error.value,/登录密码/)
   assert.equal(h.requests.length,1,'invalid forms must not transmit a mutation')
@@ -166,7 +197,58 @@ test('toggle requires the current secondary password and never requires a replac
  }finally{h.close()}
 })
 
-test('OpenAPI exposes authenticated 6–12 character secondary endpoints',()=>{
+test('settings accept legacy current secrets for toggle and replacement while new secrets remain 1–8',async()=>{
+ for(const current of ['A',...Array.from({length:4},(_,i)=>'A'.repeat(i+9)),'😀'.repeat(12)]){
+  const h=settingsHarness(locked())
+  try{
+   await settle()
+   h.state.currentPassword.value=current;await h.state.save(true)
+   assert.equal(h.requests.at(-1).body.password,current)
+   h.state.currentPassword.value=current
+   h.state.newPassword.value='😀'.repeat(8);h.state.confirmation.value=h.state.newPassword.value
+   await h.state.save()
+   assert.equal(h.requests.at(-1).body.current_password,current)
+   assert.equal(h.requests.at(-1).body.new_password,'😀'.repeat(8))
+   h.state.currentPassword.value='a'.repeat(13)
+   h.state.newPassword.value='A';h.state.confirmation.value='A'
+   const count=h.requests.length
+   await h.state.save();assert.match(h.state.error.value,/当前二级密码/)
+   await h.state.save(true);assert.match(h.state.error.value,/当前二级密码/)
+   assert.equal(h.requests.length,count)
+  }finally{h.close()}
+ }
+})
+
+test('single codepoint setup succeeds without a case composition requirement',async()=>{
+ const h=settingsHarness({...locked(),is_set:false,enabled:false})
+ try{
+  await settle()
+  h.state.loginPassword.value='synthetic-login';h.state.newPassword.value='A';h.state.confirmation.value='A'
+  await h.state.save()
+  assert.equal(h.requests.at(-1).body.new_password,'A')
+  assert.equal(h.state.state.value.enabled,true)
+ }finally{h.close()}
+})
+
+test('password input maxlength allows UTF-16 pairs for every permitted codepoint',()=>{
+ function maxLength(file,model){
+  const pending=[parse(read('src/components/'+file)).descriptor.template.ast]
+  while(pending.length){
+   const node=pending.pop()
+   if(node?.tag==='input'&&node.props?.some(p=>p.type===7&&p.name==='model'&&p.exp?.content===model)){
+    assert.equal(node.props.some(p=>p.name==='pattern'),false)
+    return Number(node.props.find(p=>p.type===6&&p.name==='maxlength')?.value?.content)
+   }
+   pending.push(...(node?.children??[]))
+  }
+  throw new Error('Missing input '+file+'/'+model)
+ }
+ for(const model of ['newPassword','confirmation'])assert.equal(maxLength('SecondaryPasswordSettings.vue',model),'😀'.repeat(8).length)
+ assert.equal(maxLength('SecondaryPasswordSettings.vue','currentPassword'),'😀'.repeat(12).length)
+ assert.equal(maxLength('GameAccessGate.vue','password'),'😀'.repeat(12).length)
+})
+
+test('OpenAPI separates 1–8 new passwords from 1–12 existing secrets',()=>{
  const spec=JSON.parse(read('backend/docs/openapi.json'))
  for(const suffix of ['/status','','/verify','/toggle']){
   const path=spec.paths['/api/v1/auth/secondary-password'+suffix]
@@ -175,5 +257,10 @@ test('OpenAPI exposes authenticated 6–12 character secondary endpoints',()=>{
   assert.deepEqual(op.security,[{SessionCookie:[]}])
  }
  const fields=spec.paths['/api/v1/auth/secondary-password'].post.requestBody.content['application/json'].schema.properties
- assert.equal(fields.new_password.minLength,6);assert.equal(fields.new_password.maxLength,12);assert.equal(fields.new_password.pattern,undefined)
+ for(const name of ['new_password','confirm_password']){
+  assert.equal(fields[name].minLength,1);assert.equal(fields[name].maxLength,8);assert.equal(fields[name].pattern,undefined)
+ }
+ for(const field of [fields.current_password,...['/verify','/toggle'].map(suffix=>spec.paths['/api/v1/auth/secondary-password'+suffix].post.requestBody.content['application/json'].schema.properties.password)]){
+  assert.equal(field.minLength,1);assert.equal(field.maxLength,12);assert.match(field.description,/兼容旧9–12/)
+ }
 })

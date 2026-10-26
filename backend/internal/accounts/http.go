@@ -421,7 +421,8 @@ func (h *HTTP) Bind(mux *http.ServeMux) {
 			result(w, nil, err)
 			return
 		}
-		v, err := h.Store.OrdersPageFiltered(u.ID, page, r.URL.Query().Get("status"))
+		query := r.URL.Query()
+		v, err := h.Store.OrdersPageRange(u.ID, page, query.Get("status"), query.Get("start_date"), query.Get("end_date"))
 		result(w, v, err)
 	}))
 	mux.HandleFunc("GET /api/v1/wallet/withdrawal-settings", auth(false, func(w http.ResponseWriter, r *http.Request, u User) {
@@ -520,6 +521,7 @@ func (h *HTTP) Bind(mux *http.ServeMux) {
 		v, e := h.Store.PendingRequests(u.ID)
 		result(w, v, e)
 	}))
+	mux.HandleFunc("GET /api/v1/admin/agents/export", auth(true, h.exportAgents))
 	mux.HandleFunc("GET /api/v1/admin/agents", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
 		page, err := requestPage(r)
 		if err != nil {
@@ -583,6 +585,28 @@ func (h *HTTP) Bind(mux *http.ServeMux) {
 			return
 		}
 		v, e := h.Store.DisableDescendants(u.ID, r.PathValue("id"), in)
+		result(w, v, e)
+	}))
+	mux.HandleFunc("GET /api/v1/admin/users/{id}/deletion", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		v, e := h.Store.MemberDeletionState(u.ID, r.PathValue("id"))
+		result(w, v, e)
+	}))
+	mux.HandleFunc("DELETE /api/v1/admin/users/{id}", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		var in MemberDeletionInput
+		if e := decode(w, r, &in); e != nil {
+			result(w, nil, e)
+			return
+		}
+		v, e := h.Store.DeleteMember(u.ID, r.PathValue("id"), in)
+		result(w, v, e)
+	}))
+	mux.HandleFunc("POST /api/v1/admin/users/{id}/restore", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		var in MemberDeletionInput
+		if e := decode(w, r, &in); e != nil {
+			result(w, nil, e)
+			return
+		}
+		v, e := h.Store.RestoreMember(u.ID, r.PathValue("id"), in)
 		result(w, v, e)
 	}))
 	mux.HandleFunc("PATCH /api/v1/admin/users/{id}", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {

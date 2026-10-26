@@ -266,6 +266,7 @@
           "secondary_password_enabled"
         ],
         "properties": {
+          "deleted": {"type":"boolean","description":"逻辑删除标志；只在true时返回，原status仍为disabled。仅通过管理员恢复接口清除此标志。"},
           "id": {
             "type": "string"
           },
@@ -1740,6 +1741,107 @@
     }
   },
   "paths": {
+    "/api/v1/admin/users/{id}/deletion": {
+      "get": {
+        "summary":"管理员预览删除或恢复会员",
+        "description":"单只读快照，不缓存。仅普通会员可作为目标，管理员及本人禁止。返回阻止原因、资金与待办计数、直属下级数及不透明revision；不返回凭据或私有修订。",
+        "security":[{"SessionCookie":[]}],
+        "parameters":[{"name":"id","in":"path","required":true,"schema":{"type":"string"}}],
+        "responses":{
+          "200":{"description":"data含username,revision,deleted,balance_cents,frozen_cents,betting_frozen_cents,available_commission_cents,pending_requests,pending_orders,direct_count,can_delete,blockers（字符串数组）；所有响应no-store"},
+          "400":{"description":"目标为管理员或本人"},"401":{"description":"未登录"},"403":{"description":"非管理员或停用"},"404":{"description":"账号不存在"}
+        }
+      }
+    },
+    "/api/v1/admin/users/{id}": {
+      "delete": {
+        "summary":"管理员可恢复地删除会员",
+        "description":"将deleted设为true且status设为disabled，撤销该账号登录与临时挑战；保留全部原始财务、凭据、账号名/邀请码占用及下级关系。余额或冻结非0、存在待处理申请、未结算投注、未领正数佣金均拒绝。事务内重查权限/最新状态和revision；只允许普通会员，不允许管理员或本人。精确幂等重试不重复操作；恢复后旧删除请求的原key重试也不会再次删除。",
+        "security":[{"SessionCookie":[]}],
+        "parameters":[{"name":"id","in":"path","required":true,"schema":{"type":"string"}}],
+        "requestBody":{"required":true,"content":{"application/json":{"schema":{
+          "type":"object","additionalProperties":false,"required":["revision","confirm_username","note","key"],
+          "properties":{"revision":{"type":"string","minLength":1},"confirm_username":{"type":"string","description":"完整目标账号，与预览一致"},"note":{"type":"string","minLength":2,"maxLength":500},"key":{"type":"string","minLength":16,"maxLength":100}}
+        }}}},
+        "responses":{"200":{"description":"data含id,username,deleted:true,status:disabled；no-store"},"400":{"description":"确认不符、预览过期、余额或待办未处理、已删除、无效输入或幂等key内容冲突"},"401":{"description":"未登录"},"403":{"description":"非管理员、停用或跨源请求"},"404":{"description":"账号不存在"}}
+      }
+    },
+    "/api/v1/admin/users/{id}/restore": {
+      "post": {
+        "summary":"恢复已删除会员为停用状态",
+        "description":"只清除deleted标志，保留status:disabled；需再通过正常状态接口启用。需当前删除预览revision、完整账号确认、原因及新key；幂等重试不重复操作。不复活旧会话，不改变财务/凭据/关系；可恢复有后续佣金等阻止删除条件的账号。",
+        "security":[{"SessionCookie":[]}],
+        "parameters":[{"name":"id","in":"path","required":true,"schema":{"type":"string"}}],
+        "requestBody":{"required":true,"content":{"application/json":{"schema":{
+          "type":"object","additionalProperties":false,"required":["revision","confirm_username","note","key"],
+          "properties":{"revision":{"type":"string","minLength":1},"confirm_username":{"type":"string"},"note":{"type":"string","minLength":2,"maxLength":500},"key":{"type":"string","minLength":16,"maxLength":100}}
+        }}}},
+        "responses":{"200":{"description":"data含id,username,deleted:false,status:disabled；no-store"},"400":{"description":"未删除、确认不符、预览过期或无效输入"},"401":{"description":"未登录"},"403":{"description":"非管理员、停用或跨源"},"404":{"description":"账号不存在"}}
+      }
+    },
+    "/api/v1/admin/deleted-users": {
+      "get": {
+        "summary":"管理员查询已删除会员列表",
+        "description":"只返回deleted:true的账号；正常/admin/users只返回未删除账号。先筛选再统计分页，财务与邀请历史保留。",
+        "security":[{"SessionCookie":[]}],
+        "parameters":[{"name":"q","in":"query","schema":{"type":"string"}},{"name":"page","in":"query","schema":{"type":"integer","minimum":1,"maximum":1000000,"default":1}}],
+        "responses":{"200":{"description":"data含items(User附betting_frozen_cents),total,page,page_size（20）；no-store。仅返回公开User投影，不含凭据或DeletionRevision"},"400":{"description":"无效页码"},"401":{"description":"未登录"},"403":{"description":"非管理员或停用"}}
+      }
+    },
+    "/api/v1/admin/agents/export": {
+      "get": {
+        "summary": "管理员完整代理关系导出",
+        "description": "单个bbolt只读快照复用代理树聚合，无分页或层级限制。username空导出全部根及后代，非空忽略大小写精确匹配并包含本人及全部后代。items父先子后，含禁用成员和孤儿根；任何环路明确失败。所有响应Cache-Control:no-store。xlsx最多1048575个账号加表头，金额及总流水0至999999999999999分，超限400不截断。xlsx文本账号保留前导0、防公式，金额数值元且两位小数，冻结/筛选/中文表头，附导出说明sheet。JSON供前端生成SVG/PNG，不返回联系方式或密码资料。",
+        "security": [{"SessionCookie": []}],
+        "parameters": [
+          {"name": "format", "in": "query", "required": true, "schema": {"type": "string", "enum": ["xlsx", "data"]}},
+          {"name": "username", "in": "query", "schema": {"type": "string", "maxLength": 32}, "description": "完整账号，去首尾空白、忽略大小写精确匹配；省略或空白导出全部"},
+          {"name": "parent_id", "in": "query", "schema": {"type": "string", "maxLength": 0}, "description": "仅允许省略或空值，非空400"},
+          {"name": "page", "in": "query", "schema": {"type": "string", "maxLength": 0}, "description": "无分页语义，仅允许省略或空值；已知参数重复400"}
+        ],
+        "responses": {
+          "200": {
+            "description": "format=xlsx为附件；format=data为标准data包装的白名单完整扁平树",
+            "headers": {
+              "Cache-Control": {"schema": {"type": "string", "example": "no-store"}},
+              "Content-Disposition": {"description": "仅xlsx，时间为北京时间", "schema": {"type": "string", "example": "attachment; filename=\"agent-relations-20261026-123456.xlsx\""}}
+            },
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {"schema": {"type": "string", "format": "binary"}},
+              "application/json": {"schema": {
+                "type": "object", "required": ["data"], "properties": {"data": {
+                  "type": "object", "required": ["items", "day", "today_stake_cents", "exported_at", "scope"],
+                  "properties": {
+                    "day": {"type": "string", "format": "date", "description": "北京时间统计日"},
+                    "exported_at": {"type": "string", "format": "date-time", "example": "2026-10-26T12:34:56+08:00", "description": "北京时间RFC3339"},
+                    "scope": {"type": "string", "description": "去首尾空白的查询根username，保留查询大小写；全部时为空"},
+                    "today_stake_cents": {"type": "integer", "format": "int64", "description": "范围内个人今日流水之和，不重复累计团队；北京时间当天pending/settled本金，排除refunded"},
+                    "items": {"type": "array", "items": {
+                      "type": "object", "additionalProperties": false,
+                      "required": ["id", "username", "inviter_id", "inviter_username", "missing_parent", "status", "deposit_cents", "direct_count", "team_count", "team_deposit_cents", "today_stake_cents", "team_today_stake_cents"],
+                      "properties": {
+                        "id": {"type": "string"}, "username": {"type": "string"},
+                        "inviter_id": {"type": "string"}, "inviter_username": {"type": "string"},
+                        "missing_parent": {"type": "boolean"}, "status": {"type": "string"},
+                        "deposit_cents": {"type": "integer", "format": "int64"},
+                        "direct_count": {"type": "integer"}, "team_count": {"type": "integer", "description": "全部后代，不含本人"},
+                        "team_deposit_cents": {"type": "integer", "format": "int64", "description": "后代充值，不含本人"},
+                        "today_stake_cents": {"type": "integer", "format": "int64"},
+                        "team_today_stake_cents": {"type": "integer", "format": "int64", "description": "后代今日流水，不含本人"}
+                      }
+                    }}
+                  }
+                }}
+              }}
+            }
+          },
+          "400": {"description": "非法格式/参数、重复参数、关系环路、Excel行数或金额超限；标准error.message JSON，无附件头"},
+          "401": {"description": "未登录或会话失效；标准error.message JSON"},
+          "403": {"description": "非管理员或禁用账号（含禁用管理员）；标准error.message JSON"},
+          "404": {"description": "精确账号不存在；标准error.message JSON"}
+        }
+      }
+    },
     "/api/v1/admin/agents": {
       "get": {
         "summary": "管理员只读代理邀请关系图",
@@ -1778,9 +1880,9 @@
           "type": "object", "additionalProperties": false, "required": ["new_password", "confirm_password"],
           "properties": {
             "login_password": {"type": "string", "format": "password", "maxLength": 128, "description": "首次设置必填；保留既有登录密码长度兼容"},
-            "current_password": {"type": "string", "format": "password", "minLength": 6, "maxLength": 12, "description": "已有二级密码时必填"},
-            "new_password": {"type": "string", "format": "password", "minLength": 6, "maxLength": 12, "description": "按Unicode字符数计，无大小写组合要求，密码比较区分大小写"},
-            "confirm_password": {"type": "string", "format": "password", "minLength": 6, "maxLength": 12}
+            "current_password": {"type": "string", "format": "password", "minLength": 1, "maxLength": 12, "description": "已有二级密码时必填；按Unicode codepoints计，兼容旧9–12字符密码，区分大小写"},
+            "new_password": {"type": "string", "format": "password", "minLength": 1, "maxLength": 8, "description": "按Unicode codepoints计，新设或修改严格1–8字符，无大小写组合要求，密码比较区分大小写"},
+            "confirm_password": {"type": "string", "format": "password", "minLength": 1, "maxLength": 8}
           }
         }}}},
         "responses": {
@@ -1798,7 +1900,7 @@
         "security": [{"SessionCookie": []}],
         "requestBody": {"required": true, "content": {"application/json": {"schema": {
           "type": "object", "additionalProperties": false, "required": ["password", "enabled"],
-          "properties": {"password": {"type": "string", "format": "password", "minLength": 6, "maxLength": 12}, "enabled": {"type": "boolean"}}
+          "properties": {"password": {"type": "string", "format": "password", "minLength": 1, "maxLength": 12, "description": "当前二级密码，按Unicode codepoints计，兼容旧9–12字符密码，区分大小写"}, "enabled": {"type": "boolean"}}
         }}}},
         "responses": {
           "200": {"description": "返回data: SecondaryPasswordStatus；保留二级密码，所有旧游戏验证失效"},
@@ -1815,7 +1917,7 @@
         "security": [{"SessionCookie": []}],
         "requestBody": {"required": true, "content": {"application/json": {"schema": {
           "type": "object", "additionalProperties": false, "required": ["password"],
-          "properties": {"password": {"type": "string", "format": "password", "minLength": 6, "maxLength": 12}}
+          "properties": {"password": {"type": "string", "format": "password", "minLength": 1, "maxLength": 12, "description": "按Unicode codepoints计，兼容旧9–12字符密码，区分大小写"}}
         }}}},
         "responses": {
           "200": {"description": "返回data: SecondaryPasswordStatus；关闭时不创建游戏验证"},
@@ -3550,7 +3652,7 @@
           "账户"
         ],
         "summary": "交易记录",
-        "description": "仅返回当前已登录且启用账户的记录，过滤用户后按每页10条分页；page为正整数，超出范围回到末页。不受Account的200条展示限制。",
+        "description": "仅返回当前已登录且启用账户的充值、提现申请（kind=deposit/withdraw），含待审核、通过、驳回状态。先按本人及类型过滤再计算总数、每页10条分页；其他申请类型不展示，不删除原始记录。page为正整数，超出范围回到末页。不受Account的200条展示限制。",
         "parameters": [
           {
             "name": "page",
@@ -3615,7 +3717,7 @@
     "/api/v1/orders": {
       "get": {
         "summary": "当前账户投注记录",
-        "description": "只读查询本人记录，按创建顺序倒序，每页10条。total、total_stake_cents、total_payout_cents按当前账户且匹配status的全部记录汇总，不受分页或最近200条展示限制。投注金额为记录的原始下注额，已撤销的退回不计入派彩。",
+        "description": "只读查询本人记录，按创建顺序倒序，每页10条。按北京时间投注创建日期筛选，start_date/end_date均可省略或为空，包含开始日零点和结束日全天（下一日零点不包含），与status叠加，不使用结算日期或服务器本地时区。非空日期严格为有效YYYY-MM-DD，年份0001–9999并校验闰年；开始日期不得晚于结束日期。先对当前账户完整历史筛选，再汇总total、total_stake_cents、total_payout_cents及分页，不受当前页或最近200条展示限制。投注金额为记录的原始下注额，已撤销的退回不计入派彩。",
         "parameters": [
           {
             "name": "page",
@@ -3641,6 +3743,18 @@
               ]
             },
             "description": "省略为全部：未开奖、中奖、未中、和局退本、已撤销"
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "schema": {"type": "string", "pattern": "^(?:|[0-9]{4}-[0-9]{2}-[0-9]{2})$"},
+            "description": "北京时间投注创建日期下限，含当日零点；可省略或为空，非空需为有效YYYY-MM-DD，年份0001–9999并校验闰年。任一日期非空时排除无创建时间的历史记录，无日期条件时保留"
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "schema": {"type": "string", "pattern": "^(?:|[0-9]{4}-[0-9]{2}-[0-9]{2})$"},
+            "description": "北京时间投注创建日期上限，含当日全天，不含下一日零点；可省略或为空，严格日期校验同start_date，不得早于start_date"
           }
         ],
         "responses": {
@@ -3648,7 +3762,7 @@
             "description": "data包含items、total、page、page_size、total_stake_cents、total_payout_cents；金额单位为分"
           },
           "400": {
-            "description": "无效页码或状态"
+            "description": "无效页码、状态、日期（含闰年校验）或开始日期晚于结束日期；标准error.message JSON"
           },
           "401": {
             "description": "未登录"
@@ -3751,7 +3865,7 @@
     "/api/v1/wallet/withdrawal-settings": {
       "get": {
         "summary": "会员读取提现手续费及共用USDT汇率",
-        "description": "需有效会话，admin路径仅管理员。打码量（required_cents）为周期内累计到账充值与奖励，每次到账叠加；打码流水（turnover_cents）为未撤销累计投注金额加后台流水调整，管理员只能调整打码流水与绿色通道，不能手动修改打码量；打码流水≥打码量即可申请提现，相等也允许；提交时保存统计范围，审核通过仅将该范围内的两项清零，提交后的充值、奖励、投注及后台流水调整继续累积到下一轮，提交和驳回不清零；绿色通道只豁免打码限制。",
+        "description": "需有效会话，admin路径仅管理员。打码量（required_cents）为周期内累计到账充值与奖励，每次到账叠加；打码流水（turnover_cents）为未撤销累计投注金额加后台流水调整，管理员可独立修改打码量、打码流水与绿色通道；明确将打码流水设为0时，同时清零打码量；省略金额字段表示保持，不因流水自然为0自动清除新充值；打码流水≥打码量即可申请提现，相等也允许；提交时保存统计范围，审核通过仅将该范围内的两项清零，提交后的充值、奖励、投注及两项后台调整继续累积到下一轮，提交和驳回不清零；绿色通道只豁免打码限制。",
         "responses": {
           "200": {
             "description": "data返回配置或打码结果"
@@ -3771,7 +3885,7 @@
     "/api/v1/admin/withdrawal-settings": {
       "get": {
         "summary": "管理员读取提现配置",
-        "description": "需有效会话，admin路径仅管理员。打码量（required_cents）为周期内累计到账充值与奖励，每次到账叠加；打码流水（turnover_cents）为未撤销累计投注金额加后台流水调整，管理员只能调整打码流水与绿色通道，不能手动修改打码量；打码流水≥打码量即可申请提现，相等也允许；提交时保存统计范围，审核通过仅将该范围内的两项清零，提交后的充值、奖励、投注及后台流水调整继续累积到下一轮，提交和驳回不清零；绿色通道只豁免打码限制。",
+        "description": "需有效会话，admin路径仅管理员。打码量（required_cents）为周期内累计到账充值与奖励，每次到账叠加；打码流水（turnover_cents）为未撤销累计投注金额加后台流水调整，管理员可独立修改打码量、打码流水与绿色通道；明确将打码流水设为0时，同时清零打码量；省略金额字段表示保持，不因流水自然为0自动清除新充值；打码流水≥打码量即可申请提现，相等也允许；提交时保存统计范围，审核通过仅将该范围内的两项清零，提交后的充值、奖励、投注及两项后台调整继续累积到下一轮，提交和驳回不清零；绿色通道只豁免打码限制。",
         "responses": {
           "200": {
             "description": "data返回配置或打码结果"
@@ -3789,7 +3903,7 @@
       },
       "put": {
         "summary": "管理员按version及rate_version并发校验保存手续费、USDT启停及共用汇率，仅影响新申请",
-        "description": "需有效会话，admin路径仅管理员。打码量（required_cents）为周期内累计到账充值与奖励，每次到账叠加；打码流水（turnover_cents）为未撤销累计投注金额加后台流水调整，管理员只能调整打码流水与绿色通道，不能手动修改打码量；打码流水≥打码量即可申请提现，相等也允许；提交时保存统计范围，审核通过仅将该范围内的两项清零，提交后的充值、奖励、投注及后台流水调整继续累积到下一轮，提交和驳回不清零；绿色通道只豁免打码限制。",
+        "description": "需有效会话，admin路径仅管理员。打码量（required_cents）为周期内累计到账充值与奖励，每次到账叠加；打码流水（turnover_cents）为未撤销累计投注金额加后台流水调整，管理员可独立修改打码量、打码流水与绿色通道；明确将打码流水设为0时，同时清零打码量；省略金额字段表示保持，不因流水自然为0自动清除新充值；打码流水≥打码量即可申请提现，相等也允许；提交时保存统计范围，审核通过仅将该范围内的两项清零，提交后的充值、奖励、投注及两项后台调整继续累积到下一轮，提交和驳回不清零；绿色通道只豁免打码限制。",
         "responses": {
           "200": {
             "description": "data返回配置或打码结果"
@@ -3809,7 +3923,7 @@
     "/api/v1/admin/users/{id}/wagering": {
       "get": {
         "summary": "管理员查看会员当前周期打码",
-        "description": "需有效会话，admin路径仅管理员。打码量（required_cents）为周期内累计到账充值与奖励，每次到账叠加；打码流水（turnover_cents）为未撤销累计投注金额加后台流水调整，管理员只能调整打码流水与绿色通道，不能手动修改打码量；打码流水≥打码量即可申请提现，相等也允许；提交时保存统计范围，审核通过仅将该范围内的两项清零，提交后的充值、奖励、投注及后台流水调整继续累积到下一轮，提交和驳回不清零；绿色通道只豁免打码限制。",
+        "description": "需有效会话，admin路径仅管理员。打码量（required_cents）为周期内累计到账充值与奖励，每次到账叠加；打码流水（turnover_cents）为未撤销累计投注金额加后台流水调整，管理员可独立修改打码量、打码流水与绿色通道；明确将打码流水设为0时，同时清零打码量；省略金额字段表示保持，不因流水自然为0自动清除新充值；打码流水≥打码量即可申请提现，相等也允许；提交时保存统计范围，审核通过仅将该范围内的两项清零，提交后的充值、奖励、投注及两项后台调整继续累积到下一轮，提交和驳回不清零；绿色通道只豁免打码限制。",
         "responses": {
           "200": {
             "description": "data返回配置或打码结果"
@@ -3826,8 +3940,22 @@
         }
       },
       "post": {
-        "summary": "管理员按version/revision调整打码流水和绿色通道，需原因与幂等key，留操作日志，不改余额",
-        "description": "需有效会话，admin路径仅管理员。打码量（required_cents）为周期内累计到账充值与奖励，每次到账叠加；打码流水（turnover_cents）为未撤销累计投注金额加后台流水调整，管理员只能调整打码流水与绿色通道，不能手动修改打码量；打码流水≥打码量即可申请提现，相等也允许；提交时保存统计范围，审核通过仅将该范围内的两项清零，提交后的充值、奖励、投注及后台流水调整继续累积到下一轮，提交和驳回不清零；绿色通道只豁免打码限制。",
+        "summary": "管理员按version/revision独立调整打码量、打码流水和绿色通道；显式流水清零联动打码量；原因与幂等key必填，不改余额",
+        "security": [{"SessionCookie": []}],
+        "parameters": [{"name":"id","in":"path","required":true,"schema":{"type":"string"}}],
+        "requestBody": {"required":true,"content":{"application/json":{"schema":{
+          "type":"object","additionalProperties":false,"required":["version","revision","note","key"],
+          "properties":{
+            "version":{"type":"integer","format":"int64","minimum":1},
+            "revision":{"type":"string"},
+            "turnover_cents":{"type":"integer","format":"int64","minimum":0,"maximum":100000000000,"description":"省略保持；显式0同时清零打码量，不得同时传正数required_cents"},
+            "required_cents":{"type":"integer","format":"int64","minimum":0,"maximum":100000000000,"description":"省略保持；可单独修改，不改变充值/奖励原记录"},
+            "green_channel":{"type":"boolean","default":false,"description":"沿用既有设置语义；客户端应提交当前开关值"},
+            "note":{"type":"string","minLength":2,"maxLength":500},
+            "key":{"type":"string","minLength":16,"maxLength":100}
+          }
+        }}}},
+        "description": "需有效会话，admin路径仅管理员。打码量（required_cents）为周期内累计到账充值与奖励，每次到账叠加；打码流水（turnover_cents）为未撤销累计投注金额加后台流水调整，管理员可独立修改打码量、打码流水与绿色通道；明确将打码流水设为0时，同时清零打码量；省略金额字段表示保持，不因流水自然为0自动清除新充值；打码流水≥打码量即可申请提现，相等也允许；提交时保存统计范围，审核通过仅将该范围内的两项清零，提交后的充值、奖励、投注及两项后台调整继续累积到下一轮，提交和驳回不清零；绿色通道只豁免打码限制。",
         "responses": {
           "200": {
             "description": "data返回配置或打码结果"
