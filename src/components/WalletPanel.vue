@@ -3,6 +3,7 @@ import PaymentRequestDetails from './PaymentRequestDetails.vue'
 import WalletWithdrawalForm from './WalletWithdrawalForm.vue'
 import WithdrawalReceipt from './WithdrawalReceipt.vue'
 import WalletWithdrawalAccounts from './WalletWithdrawalAccounts.vue'
+import DepositChannels from './DepositChannels.vue'
 import type {WithdrawalAddress} from '../api/wallet'
 import {computed,onMounted,onUnmounted,ref,watch} from 'vue'
 import {Check,ChevronDown,ChevronLeft,Copy,CreditCard,FileText,LockKeyhole,RefreshCw,Wallet} from 'lucide-vue-next'
@@ -188,6 +189,7 @@ onUnmounted(()=>{mounted=false;emit('busy',false)})
    <div class="wallet-mode" role="tablist" aria-label="选择存款或提款"><button role="tab" :aria-selected="kind==='deposit'" :class="{active:kind==='deposit'}" :disabled="locked" @click="switchKind('deposit')">存款</button><button role="tab" :aria-selected="kind==='withdraw'" :class="{active:kind==='withdraw'}" :disabled="locked" @click="switchKind('withdraw')">提款</button></div>
    <template v-if="kind==='deposit'">
     <div class="wallet-balance"><div><span>可用余额</span><strong>{{user?money(user.balance_cents):'—'}}<small>元</small></strong></div><Wallet :size="25"/></div>
+    <DepositChannels/>
     <section class="wallet-method-section" aria-labelledby="wallet-method-heading"><h2 id="wallet-method-heading">充值方式</h2><div class="wallet-methods"><div class="wallet-method selected"><CreditCard :size="26"/><span>USDT 账户</span><Check :size="11"/></div></div><p v-if="!usdtAvailable" class="wallet-method-note">{{usdtUnavailable}}<button v-if="user" :disabled="settingsLoading||locked" @click="loadSettings">刷新</button></p></section>
     <section v-if="activePayment" class="wallet-usdt-details" aria-label="USDT 收款信息"><div class="wallet-address-row"><span>收款地址</span><code>{{activePayment.address}}</code><button :disabled="locked" @click="copyAddress"><Copy :size="12"/>复制</button></div><div class="wallet-payment-row"><span>转账网络</span><strong>{{activePayment.network}}</strong></div><div class="wallet-payment-row"><span>USDT 汇率</span><strong>1 USDT = {{activePayment.rate_yuan}} 元</strong></div><div class="wallet-payment-row"><span>存款金额</span><strong>{{estimatedCents===null?'—':money(estimatedCents)}} 元</strong></div></section>
     <section v-if="activePayment?.qr_code_data_url" class="wallet-payment-qr" aria-label="充值收款二维码"><img :src="activePayment.qr_code_data_url" alt="USDT收款二维码"/><p>{{activePayment.network}}收款二维码 · 转账前请核对收款信息</p></section>
