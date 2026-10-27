@@ -143,7 +143,13 @@ func TestSavedWithdrawalAddressHTTPAuthenticationAndOwnership(t *testing.T) {
 			t.Fatal(w.Code, w.Body)
 		}
 	}
-	body := `{"version":0,"address":"T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb"}`
+	body := `{"version":0,"address":"T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb","address_confirmation":"T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb","withdrawal_password":"483927"}`
+	if w := request("PUT", "/wallet/withdrawal-addresses/TRC20", token, `{"version":0,"address":"T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb"}`, ""); w.Code != 400 {
+		t.Fatal("old PIN-less API bypassed binding", w.Code)
+	}
+	if w := request("PUT", "/wallet/withdrawal-addresses/TRC20", token, strings.Replace(body, "483927", "000000", 1), ""); w.Code != 400 {
+		t.Fatal("incorrect binding PIN accepted", w.Code)
+	}
 	if w := request("PUT", "/wallet/withdrawal-addresses/TRC20", token, body, "https://foreign.invalid"); w.Code != 403 {
 		t.Fatal("cross-origin write accepted", w.Code)
 	}

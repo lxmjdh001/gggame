@@ -438,12 +438,12 @@ func (h *HTTP) Bind(mux *http.ServeMux) {
 		result(w, v, e)
 	}))
 	mux.HandleFunc("PUT /api/v1/wallet/withdrawal-addresses/{network}", auth(false, func(w http.ResponseWriter, r *http.Request, u User) {
-		var in WithdrawalAddress
+		var in WithdrawalAddressInput
 		if e := decode(w, r, &in); e != nil {
 			result(w, nil, e)
 			return
 		}
-		v, e := h.Store.SaveWithdrawalAddress(u.ID, r.PathValue("network"), in)
+		v, e := h.Store.SaveVerifiedWithdrawalAddress(u.ID, r.PathValue("network"), in)
 		result(w, v, e)
 	}))
 	mux.HandleFunc("GET /api/v1/admin/withdrawal-settings", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {

@@ -2,6 +2,8 @@
 import PaymentRequestDetails from './PaymentRequestDetails.vue'
 import WalletWithdrawalForm from './WalletWithdrawalForm.vue'
 import WithdrawalReceipt from './WithdrawalReceipt.vue'
+import WalletWithdrawalAccounts from './WalletWithdrawalAccounts.vue'
+import type {WithdrawalAddress} from '../api/wallet'
 import {computed,onMounted,onUnmounted,ref,watch} from 'vue'
 import {Check,ChevronDown,ChevronLeft,Copy,CreditCard,FileText,LockKeyhole,RefreshCw,Wallet} from 'lucide-vue-next'
 import {APIError,account,api,cents,datetime,key,labels,money,refreshAccount,user,type User,type WalletRequest,type WithdrawalSettings} from '../api/account'
@@ -13,7 +15,7 @@ type PaymentSettings=EnabledPaymentSettings|{version:number;enabled:false;manual
 type RequestPayload={kind:WalletKind;amount_cents:number;note:string;transaction_id?:string;payment_method?:WithdrawalAccountType;withdrawal_settings_version?:number;withdrawal_rate_version?:number;payout_network?:string;payout_address?:string;withdrawal_password?:string;withdrawal_password_confirmation?:string;key:string}|{kind:'deposit';payment_method:'usdt';usdt_amount:string;transaction_id:string;settings_version:number;note:string;key:string}
 const props=defineProps<{mode:WalletKind}>()
 const emit=defineEmits<{back:[];login:[];notify:[message:string];busy:[busy:boolean]}>()
-const addressSaving=ref(false),receiptId=ref(''),receiptOwner=ref('')
+const addressSaving=ref(false),receiptId=ref(''),receiptOwner=ref(''),accountsOpen=ref(true),bindingPinSetup=ref(false)
 const kind=ref<WalletKind>(props.mode),busy=ref(false),refreshing=ref(false),error=ref('')
 const drafts=ref({deposit:{amount:'',note:''},withdraw:{amount:'',note:''}})
 const draft=computed(()=>drafts.value[kind.value])
@@ -51,10 +53,10 @@ const pendingCount=computed(()=>account.value?.requests.filter(r=>r.status==='pe
 const walletLabel=(value:string)=>({deposit:'存款',withdraw:'提款',withdraw_hold:'提款冻结',withdraw_approved:'提款完成',withdraw_rejected:'提款解冻',deposit_approved:'存款入账'}[value]??labels[value]??value)
 let mounted=true
 watch(locked,value=>emit('busy',value),{immediate:true,flush:'sync'})
-watch(()=>props.mode,value=>{if(!locked.value){receiptId.value='';kind.value=value;error.value=''}})
+watch(()=>props.mode,value=>{if(!locked.value){receiptId.value='';accountsOpen.value=true;kind.value=value;error.value=''}})
 function clearDrafts(){drafts.value={deposit:{amount:'',note:''},withdraw:{amount:'',note:''}};usdtAmount.value='';transactionId.value='';manualTransactionId.value='';usdtNote.value='';withdrawalPassword.value='';withdrawalConfirmation.value='';payoutAddress.value=''}
 watch(()=>user.value?.id,(next,previous)=>{
- receiptId.value='';receiptOwner.value=''
+ receiptId.value='';receiptOwner.value='';accountsOpen.value=true;bindingPinSetup.value=false
  settings.value=null;settingsError.value='';withdrawalSettings.value=null;withdrawalError.value='';payoutAddress.value=''
  currentPin.value='';newPin.value='';confirmPin.value='';pinSetupError.value='';pinSetupOpen.value=false
  if(pending.value){
@@ -65,11 +67,11 @@ watch(()=>user.value?.id,(next,previous)=>{
    error.value=`已切换账号，原申请未向当前账号提交。${name} 的申请结果仍待确认，请登录该账号查看申请记录。`
    emit('notify',error.value)
   }
-  if(next===pending.value?.owner.id&&'payout_address' in pending.value.payload){payoutNetwork.value=pending.value.payload.payout_network??'TRC20';payoutAddress.value=pending.value.payload.payout_address??''}
+  if(next===pending.value?.owner.id&&'payout_address' in pending.value.payload){accountsOpen.value=false;payoutNetwork.value=pending.value.payload.payout_network??'TRC20';payoutAddress.value=pending.value.payload.payout_address??''}
  }else if(previous&&next!==previous){clearDrafts();error.value=''}
  if(next){void loadSettings();void loadWithdrawalSettings()}
 },{flush:'sync'})
-function switchKind(next:WalletKind){if(locked.value)return;kind.value=next;error.value='';withdrawalPassword.value='';withdrawalConfirmation.value='';currentPin.value='';newPin.value='';confirmPin.value='';pinSetupError.value='';pinSetupOpen.value=false}
+function switchKind(next:WalletKind){if(locked.value||kind.value===next)return;accountsOpen.value=true;kind.value=next;error.value='';withdrawalPassword.value='';withdrawalConfirmation.value='';currentPin.value='';newPin.value='';confirmPin.value='';pinSetupError.value='';pinSetupOpen.value=false}
 async function loadSettings(){
  const owner=user.value?.id;if(!owner)return
  settingsLoading.value=true
@@ -111,6 +113,7 @@ async function saveWithdrawalPassword(){
   if(user.value?.id!==owner)return
   user.value=updated;if(account.value?.user.id===owner)account.value.user=updated
   currentPin.value='';newPin.value='';confirmPin.value='';withdrawalPassword.value='';withdrawalConfirmation.value='';pinSetupOpen.value=false
+  if(bindingPinSetup.value){bindingPinSetup.value=false;accountsOpen.value=true}
   emit('notify','提现密码已保存')
  }catch(e){pinSetupError.value=(e as Error).message;if(e instanceof APIError&&e.status===401)emit('login')}
  finally{pinSetupBusy.value=false}
@@ -167,6 +170,8 @@ async function submit(){
   else{error.value=pendingNotice.value;emit('notify',pendingNotice.value);if(e instanceof APIError&&e.status===401)emit('login')}
  }finally{busy.value=false}
 }
+function destinationReady(value:WithdrawalAddress){if(pending.value||!user.value)return;payoutNetwork.value=value.network;payoutAddress.value=value.address;withdrawalPassword.value='';withdrawalConfirmation.value='';accountsOpen.value=false}
+function setupBindingPIN(){bindingPinSetup.value=true;accountsOpen.value=false;pinSetupOpen.value=true}
 function setWithdrawalPassword(value:string){withdrawalPassword.value=value;withdrawalConfirmation.value=value}
 function showReceipt(id:string){if(!user.value||locked.value)return;receiptOwner.value=user.value.id;receiptId.value=id;window.scrollTo({top:0})}
 onMounted(()=>void refresh())
@@ -174,8 +179,10 @@ onUnmounted(()=>{mounted=false;emit('busy',false)})
 </script>
 
 <template>
- <WithdrawalReceipt v-if="receiptId&&receiptOwner===user?.id" :request-id="receiptId" @back="receiptId='';void refresh()"/>
- <section v-else class="wallet-panel" :class="{'withdraw-reference':kind==='withdraw'}">
+ <WithdrawalReceipt v-if="receiptId&&receiptOwner===user?.id" :request-id="receiptId" @back="receiptId='';accountsOpen=true;void refresh()"/>
+ <template v-else>
+ <WalletWithdrawalAccounts v-if="kind==='withdraw'&&user" :key="user.id" :active="accountsOpen&&!pending" :locked="locked" :network="payoutNetwork" @ready="destinationReady" @busy="addressSaving=$event" @notify="emit('notify',$event)" @back="emit('back')" @setup-password="setupBindingPIN"/>
+ <section v-show="kind!=='withdraw'||!user||!accountsOpen||!!pending" class="wallet-panel" :class="{'withdraw-reference':kind==='withdraw'}">
   <header class="wallet-header"><button :disabled="locked" aria-label="返回个人中心" @click="emit('back')"><ChevronLeft :size="24"/></button><h1>存/提款</h1><button :disabled="refreshing||busy||!user" aria-label="刷新钱包" @click="refresh"><RefreshCw :size="19" :class="{spinning:refreshing}"/></button></header>
   <div class="wallet-content">
    <div class="wallet-mode" role="tablist" aria-label="选择存款或提款"><button role="tab" :aria-selected="kind==='deposit'" :class="{active:kind==='deposit'}" :disabled="locked" @click="switchKind('deposit')">存款</button><button role="tab" :aria-selected="kind==='withdraw'" :class="{active:kind==='withdraw'}" :disabled="locked" @click="switchKind('withdraw')">提款</button></div>
@@ -188,7 +195,7 @@ onUnmounted(()=>{mounted=false;emit('busy',false)})
    <slot name="payment-details" :kind="kind" :locked="locked"/>
    <div v-if="showPinSetup" class="wallet-pin-heading"><span>{{needsPin?'提款前请先设置 6 位数字提现密码':'修改提现密码'}}</span><button v-if="!needsPin" :disabled="locked" @click="pinSetupOpen=false">收起</button></div>
    <form v-if="showPinSetup" class="wallet-pin-setup" @submit.prevent="saveWithdrawalPassword"><h2>{{needsPin?'设置提现密码':'修改提现密码'}}</h2><label v-if="!needsPin" class="wallet-field"><span>原提现密码</span><input v-model="currentPin" :disabled="locked" type="password" inputmode="numeric" required pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="off" placeholder="请输入原 6 位数字提现密码"/></label><label class="wallet-field"><span>提现密码</span><input v-model="newPin" :disabled="locked" type="password" inputmode="numeric" required pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="new-password" placeholder="请输入 6 位数字"/></label><label class="wallet-field"><span>确认提现密码</span><input v-model="confirmPin" :disabled="locked" type="password" inputmode="numeric" required pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="new-password" placeholder="请再次输入提现密码"/></label><p v-if="pinSetupError" class="wallet-error" role="alert">{{pinSetupError}}</p><button class="wallet-submit" :disabled="locked">{{pinSetupBusy?'保存中…':'保存提现密码'}}</button></form>
-   <WalletWithdrawalForm v-if="kind==='withdraw'&&(!needsPin||pending)" :user="user" :settings="activeWithdrawal" :wager="account?.wagering" v-model:amount="draft.amount" v-model:network="payoutNetwork" v-model:address="payoutAddress" :password="withdrawalPassword" @update:password="setWithdrawalPassword" :locked="locked" :submitting="busy" :pending="!!pending" :address-busy="addressSaving" :needs-pin="needsPin" :error="error||withdrawalError" :notice="pendingNotice" :quantity="usdtPayoutPreview" :fee="feePreview" @busy="addressSaving=$event" @notify="emit('notify',$event)" @submit="submit" @login="emit('login')" @change-password="pinSetupOpen=!pinSetupOpen;pinSetupError=''"/>
+   <WalletWithdrawalForm v-if="kind==='withdraw'&&(!needsPin||pending)" :user="user" :settings="activeWithdrawal" :wager="account?.wagering" v-model:amount="draft.amount" v-model:network="payoutNetwork" v-model:address="payoutAddress" :password="withdrawalPassword" @update:password="setWithdrawalPassword" :locked="locked" :submitting="busy" :pending="!!pending" :address-busy="addressSaving" :needs-pin="needsPin" :error="error||withdrawalError" :notice="pendingNotice" :quantity="usdtPayoutPreview" :fee="feePreview" @accounts="accountsOpen=true" @submit="submit" @login="emit('login')" @change-password="pinSetupOpen=!pinSetupOpen;pinSetupError=''"/>
    <form v-if="kind==='deposit'" class="wallet-form" @submit.prevent="submit">
     <label class="wallet-field"><span>USDT 数量</span><input v-model="usdtAmount" :disabled="locked" inputmode="numeric" required maxlength="15" autocomplete="off" placeholder="请输入 USDT 数量"/></label><label class="wallet-field"><span>交易 ID<small>（必填）</small></span><input v-model="transactionId" :disabled="locked" required minlength="5" maxlength="5" pattern="[a-fA-F0-9]{5}" autocomplete="off" spellcheck="false" placeholder="请输入交易 ID 后5位"/></label><label class="wallet-field wallet-note-field"><span>转账备注<small>（选填）</small></span><textarea v-model="usdtNote" :disabled="locked" maxlength="500" rows="2" placeholder="请输入转账备注"/></label>
     <p v-if="pendingNotice" class="wallet-pending" role="status">{{pendingNotice}}</p><p v-if="error&&error!==pendingNotice" class="wallet-error" role="alert">{{error}}</p>
@@ -199,6 +206,7 @@ onUnmounted(()=>{mounted=false;emit('busy',false)})
    <p v-else class="wallet-login-note"><LockKeyhole :size="13"/>登录后可查看申请记录</p>
   </div>
  </section>
+ </template>
 </template>
 
 <style scoped>

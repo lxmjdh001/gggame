@@ -1,39 +1,22 @@
 <script setup lang="ts">
-import {computed,nextTick,onUnmounted,ref,watch} from 'vue'
-import {UserRound,Coins,CreditCard,BadgeDollarSign,ArrowLeftRight,LockKeyhole,ChevronRight,X} from 'lucide-vue-next'
-import WalletWithdrawalAddress from './WalletWithdrawalAddress.vue'
+import {computed} from 'vue'
+import {UserRound,Coins,CreditCard,BadgeDollarSign,ArrowLeftRight,LockKeyhole,ChevronRight} from 'lucide-vue-next'
 import {money,type User,type WithdrawalSettings,type Wagering} from '../api/account'
 import {withdrawalAccountLabel,withdrawalMethodForNetwork} from '../lib/withdrawalAccounts'
 import {maskedName,maskedDestination} from '../lib/withdrawalDisplay'
 const props=defineProps<{user:User|null;settings:WithdrawalSettings|null;wager?:Wagering;amount:string;network:string;address:string;password:string;locked:boolean;submitting:boolean;pending:boolean;addressBusy:boolean;needsPin:boolean;error:string;notice:string;quantity:string;fee:{fee:number;net:number}|null}>()
-const emit=defineEmits<{'update:amount':[value:string];'update:network':[value:string];'update:address':[value:string];'update:password':[value:string];busy:[value:boolean];notify:[value:string];submit:[];login:[];'change-password':[]}>()
-const choosing=ref(false),panel=ref<HTMLElement|null>(null),choiceTrigger=ref<HTMLButtonElement|null>(null)
+const emit=defineEmits<{'update:amount':[value:string];'update:network':[value:string];'update:address':[value:string];'update:password':[value:string];busy:[value:boolean];notify:[value:string];submit:[];login:[];'change-password':[];accounts:[]}>()
 const label=computed(()=>withdrawalAccountLabel(withdrawalMethodForNetwork(props.network)))
 const addressLabel=computed(()=>withdrawalMethodForNetwork(props.network)==='usdt'?'USDT地址':'收款账号')
 const disabled=computed(()=>props.submitting||props.addressBusy||!!props.user&&!props.pending&&(props.needsPin||!props.wager?.eligible||!props.settings?.usdt_enabled))
-let priorOverflow:string|undefined
-function releaseScroll(){if(priorOverflow!==undefined){document.body.style.overflow=priorOverflow;priorOverflow=undefined}}
-function close(){if(props.locked)return;choosing.value=false;void nextTick(()=>choiceTrigger.value?.focus())}
-function trapFocus(event:KeyboardEvent){
- if(event.key==='Escape'){event.preventDefault();close();return}
- if(event.key!=='Tab')return
- const items=panel.value?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled)')
- if(!items?.length)return
- const first=items[0]!,last=items[items.length-1]!
- if(event.shiftKey&&(document.activeElement===first||document.activeElement===panel.value)){event.preventDefault();last.focus()}
- else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}
-}
-watch(choosing,async open=>{if(open){priorOverflow=document.body.style.overflow;document.body.style.overflow='hidden';await nextTick();panel.value?.focus()}else releaseScroll()})
-watch(()=>props.user?.id,()=>{choosing.value=false},{flush:'sync'})
-onUnmounted(releaseScroll)
 </script>
 <template>
  <div class="reference-withdrawal">
   <form @submit.prevent="emit('submit')">
    <div class="withdraw-row"><UserRound/><span>真实姓名:</span><strong class="muted">{{maskedName(user?.name)}}</strong></div>
    <div class="withdraw-row"><Coins/><span>账户余额:</span><strong class="muted">{{user?money(user.balance_cents)+' 元':'—'}}</strong></div>
-   <button ref="choiceTrigger" type="button" class="withdraw-row selectable" :disabled="locked||!user" aria-label="选择提款方式" :aria-expanded="choosing" @click="choosing=true"><CreditCard/><span>提款方式:</span><strong>{{label}}<small v-if="label==='USDT'"> · {{network}}</small></strong><ChevronRight class="row-chevron"/></button>
-   <button type="button" class="withdraw-row selectable" :disabled="locked||!user" aria-label="更改提款收款账号" @click="choosing=true"><CreditCard/><span>{{addressLabel}}:</span><strong>{{maskedDestination(address)}}</strong><small class="row-action">更改</small></button>
+   <button type="button" class="withdraw-row selectable" :disabled="locked||!user" aria-label="选择提款方式" @click="emit('accounts')"><CreditCard/><span>提款方式:</span><strong>{{label}}<small v-if="label==='USDT'"> · {{network}}</small></strong><ChevronRight class="row-chevron"/></button>
+   <button type="button" class="withdraw-row selectable" :disabled="locked||!user" aria-label="更改提款收款账号" @click="emit('accounts')"><CreditCard/><span>{{addressLabel}}:</span><strong>{{maskedDestination(address)}}</strong><small class="row-action">更改</small></button>
    <div class="withdraw-row"><Coins/><span>通道金额限制:</span><strong class="muted">1 – 1,000,000 元</strong></div>
    <label class="withdraw-row"><BadgeDollarSign/><span>提款金额:</span><input :value="amount" :disabled="locked" :required="!pending" inputmode="decimal" maxlength="20" autocomplete="off" aria-label="提款金额（元）" placeholder="请输入金额" @input="emit('update:amount',($event.target as HTMLInputElement).value)"/></label>
    <div class="withdraw-row"><ArrowLeftRight/><span>数量:</span><strong class="muted">{{quantity}}<small> U</small></strong></div>
@@ -46,7 +29,7 @@ onUnmounted(releaseScroll)
   <button v-if="user&&!needsPin" type="button" class="pin-link" :disabled="locked" @click="emit('change-password')">修改提款密码</button>
   <section class="withdraw-help"><h2>提示信息:</h2><p>提交提款申请后由管理员审核，可在交易记录中查看处理状态。</p><p>单笔提款金额：1 – 1,000,000 元。</p><h2>手续费说明:</h2><p>{{settings?'按提款金额的 '+settings.fee_bps/100+'% 计收手续费。':'正在读取手续费设置。'}}费用从申请金额中扣除，所有账户按扣费后金额和 USDT 汇率换算到账数量，保留6位小数。</p><p v-if="settings&&!settings.usdt_enabled" class="error">提款通道暂未开放。</p></section>
   <section class="withdraw-progress" aria-label="提现打码进度"><h2>打码进度:</h2><template v-if="wager"><div class="progress-equation"><div><span>提款所需打码量</span><strong>{{money(wager.required_cents)}}</strong></div><b>−</b><div><span>已达打码流水</span><strong>{{money(wager.turnover_cents)}}</strong></div></div><p class="progress-remaining">尚需打码流水 <strong>{{money(wager.remaining_cents)}} 元</strong></p><p v-if="wager.green_channel" class="progress-status">绿色通道已开启</p><p v-else class="progress-status">{{wager.eligible?'打码已达标，可申请提款':'打码流水达到打码量后可申请提款'}}</p></template><p v-else>登录并刷新钱包后查看打码进度。</p><details class="wager-explanation"><summary>打码规则</summary><p>打码量为到账充值＋奖励（含后台调整），每次新增都会叠加；打码流水为累计投注，撤销不计。打码流水≥打码量（相等也可）或开启绿色通道后可提款。审核通过仅清零申请覆盖的记录，提交后的充值、奖励和投注继续累计到下一轮；驳回不清零。</p></details></section>
-  <div v-show="choosing" class="destination-overlay" @click.self="close" @keydown="trapFocus"><section ref="panel" class="destination-dialog" role="dialog" aria-modal="true" aria-labelledby="destination-heading" tabindex="-1"><header><h2 id="destination-heading">提款账户</h2><button type="button" :disabled="locked" aria-label="关闭收款账号设置" @click="close"><X :size="21"/></button></header><WalletWithdrawalAddress :network="network" :address="address" :locked="locked" @update:network="emit('update:network',$event)" @update:address="emit('update:address',$event)" @busy="emit('busy',$event)" @notify="emit('notify',$event);choosing=false"/></section></div>
+
  </div>
 </template>
 <style scoped>

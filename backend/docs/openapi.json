@@ -3870,8 +3870,8 @@
     },
     "/api/v1/wallet/withdrawal-addresses/{network}": {
       "put": {
-        "summary": "本人保存或更改提现地址",
-        "description": "首次version=0，修改须提交当前版本。同地址旧请求可安全重试；不同地址旧版本不能覆盖新记录。只保存偏好，不修改任何已提交提现的收款快照，不转账、不改余额或密码。",
+        "summary": "校验提款密码后保存或更改本人收款账户",
+        "description": "首次version=0，修改须提交当前版本。须确认两次地址或账号一致并验证当前6位提款密码，沿用持久化PIN尝试限制；密码变更与保存并发时拒绝旧凭据。同地址旧请求可在重新验证PIN后安全重试，不同地址旧版本不能覆盖新记录。不保存密码或确认输入，不修改已提交提款的收款快照、余额、密码或打码。",
         "security": [
           {
             "SessionCookie": []
@@ -3886,7 +3886,12 @@
               "type": "string",
               "enum": [
                 "TRC20",
-                "ERC20"
+                "ERC20",
+                "OKPAY",
+                "TOPAY",
+                "KDPAY",
+                "FPAY",
+                "808"
               ]
             }
           }
@@ -3900,7 +3905,9 @@
                 "additionalProperties": false,
                 "required": [
                   "version",
-                  "address"
+                  "address",
+                  "address_confirmation",
+                  "withdrawal_password"
                 ],
                 "properties": {
                   "version": {
@@ -3910,6 +3917,17 @@
                   "address": {
                     "type": "string",
                     "maxLength": 128
+                  },
+                  "address_confirmation": {
+                    "type": "string",
+                    "maxLength": 128
+                  },
+                  "withdrawal_password": {
+                    "type": "string",
+                    "pattern": "^[0-9]{6}$",
+                    "minLength": 6,
+                    "maxLength": 6,
+                    "writeOnly": true
                   }
                 }
               }

@@ -18,6 +18,30 @@ type WithdrawalAddress struct {
 	Address string `json:"address"`
 }
 
+// Secrets and confirmation are accepted input only, never saved preferences.
+type WithdrawalAddressInput struct {
+	Version      int64  `json:"version"`
+	Network      string `json:"network,omitempty"`
+	Address      string `json:"address"`
+	Confirmation string `json:"address_confirmation"`
+	Password     string `json:"withdrawal_password"`
+}
+
+func (s *Store) SaveVerifiedWithdrawalAddress(id, network string, in WithdrawalAddressInput) (WithdrawalAddress, error) {
+	if strings.TrimSpace(in.Address) == "" || strings.TrimSpace(in.Address) != strings.TrimSpace(in.Confirmation) {
+		return WithdrawalAddress{}, errors.New("两次收款地址或账号不一致，请重新确认")
+	}
+	var before storedUser
+	err := s.db.View(func(tx *bolt.Tx) error { var e error; before, e = active(tx, id); return e })
+	if err != nil {
+		return WithdrawalAddress{}, err
+	}
+	if err = s.VerifyWithdrawalPassword(id, in.Password); err != nil {
+		return WithdrawalAddress{}, err
+	}
+	return s.saveWithdrawalAddress(id, network, WithdrawalAddress{Version: in.Version, Network: in.Network, Address: in.Address}, &before)
+}
+
 func validWithdrawalAddress(network, address string) bool {
 	switch network {
 	case "TRC20":
@@ -59,6 +83,10 @@ func (s *Store) WithdrawalAddresses(id string) ([]WithdrawalAddress, error) {
 }
 
 func (s *Store) SaveWithdrawalAddress(id, network string, in WithdrawalAddress) (WithdrawalAddress, error) {
+	return s.saveWithdrawalAddress(id, network, in, nil)
+}
+
+func (s *Store) saveWithdrawalAddress(id, network string, in WithdrawalAddress, verified *storedUser) (WithdrawalAddress, error) {
 	var out WithdrawalAddress
 	network = strings.ToUpper(strings.TrimSpace(network))
 	in.Address = strings.TrimSpace(in.Address)
@@ -66,8 +94,12 @@ func (s *Store) SaveWithdrawalAddress(id, network string, in WithdrawalAddress) 
 		return out, errors.New("请填写有效的收款账号；USDT须填写与所选网络匹配的完整地址，其他钱包账号为1–128位且不能含空白或控制字符")
 	}
 	err := s.db.Update(func(tx *bolt.Tx) error {
-		if _, err := active(tx, id); err != nil {
+		current, err := active(tx, id)
+		if err != nil {
 			return err
+		}
+		if verified != nil && (current.WithdrawalHash != verified.WithdrawalHash || current.WithdrawalSalt != verified.WithdrawalSalt || !current.WithdrawalPasswordSet) {
+			return errors.New("提款密码已更新，请重新输入后保存")
 		}
 		b := tx.Bucket([]byte("withdrawal_addresses"))
 		key := id + ":" + network
