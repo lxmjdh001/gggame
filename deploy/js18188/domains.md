@@ -33,6 +33,8 @@ curl -fsS http://127.0.0.1:8082/healthz
 
 `install-domains.sh` 不改主站虚拟主机、不停止 nginx，不改资金数据，不主动重启业务后端。首次初始化只创建独立的空备用域名配置，不申请证书。安装前应确认 nginx http 块包含 `/etc/nginx/conf.d/*.conf`（发行版默认）。所有安装脚本应先在完整发布包检查后执行。
 
+服务启用只读系统保护；nginx 配置检查需要以读写方式打开现有 PID 文件，因此仅额外开放 `/run/nginx.pid`（不开放整个 /run）。
+
 服务以 root / starlight 组运行，Unix socket `/run/starlight-domains/control.sock` 为 0660，目录 0750，业务后端仍为无特权 starlight 用户。只允许固定的三个操作，不运行输入的命令、不接受文件路径。root 所有状态保存在 `/var/lib/starlight-domains/state.json`（0600），nginx 配置为 `/etc/nginx/conf.d/starlight-backups.conf`；不要给业务用户写这两个位置或其父目录的权限。
 
 根目录、主域名与 IPv4 可由 root 在 systemd 配置调整。已存在状态与主域名/IP 不一致时服务拒绝启动，避免迁移服务器时误用旧解析规则。证书每个完整域名单独签发，cert-name 为 `starlight-<域名 SHA256>`；由 certbot.timer 自动续期，并在成功续期后执行 nginx 检查/重载钩子。保持 HTTP 80 可达。
