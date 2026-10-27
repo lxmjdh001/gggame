@@ -78,7 +78,7 @@ func run() error {
 		}
 		logger.Info("administrator initialized; credentials saved locally", "path", path)
 	}
-	accountHTTP := &accounts.HTTP{Store: accountDB, Draws: db, SecureCookie: os.Getenv("COOKIE_SECURE") == "true", ResultAvailable: func(session, issue string) bool {
+	accountHTTP := &accounts.HTTP{DomainSocket: os.Getenv("DOMAIN_SOCKET"), Store: accountDB, Draws: db, SecureCookie: os.Getenv("COOKIE_SECURE") == "true", ResultAvailable: func(session, issue string) bool {
 		r, e := db.Get(session, issue)
 		return e == nil && r.Origin == "scheduled"
 	}}

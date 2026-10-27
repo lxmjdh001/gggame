@@ -11,6 +11,57 @@
   ],
   "components": {
     "schemas": {
+      "BackupDomains": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer"
+          },
+          "primary": {
+            "type": "string"
+          },
+          "ip": {
+            "type": "string"
+          },
+          "busy": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "slots": {
+            "type": "array",
+            "minItems": 5,
+            "maxItems": 5,
+            "items": {
+              "type": "object",
+              "properties": {
+                "domain": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "dns": {
+                  "type": "string"
+                },
+                "ssl": {
+                  "type": "string"
+                },
+                "expires": {
+                  "type": "string"
+                },
+                "checked": {
+                  "type": "string"
+                },
+                "error": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
       "WithdrawalDetail": {
         "type": "object",
         "required": [
@@ -1766,6 +1817,174 @@
     }
   },
   "paths": {
+    "/api/v1/admin/domains": {
+      "get": {
+        "summary": "管理员读取主域名、五个备用域名及异步任务状态",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "当前状态；操作返回 busy=true 后请轮询 GET",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/BackupDomains"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "输入错误、版本冲突、任务处理中或域名服务不可用"
+          },
+          "401": {
+            "description": "未登录"
+          },
+          "403": {
+            "description": "非管理员或跨站写请求"
+          }
+        }
+      },
+      "put": {
+        "summary": "保存五个备用域名；新增域名默认禁用",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "当前状态；操作返回 busy=true 后请轮询 GET",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/BackupDomains"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "输入错误、版本冲突、任务处理中或域名服务不可用"
+          },
+          "401": {
+            "description": "未登录"
+          },
+          "403": {
+            "description": "非管理员或跨站写请求"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "version",
+                  "domains"
+                ],
+                "properties": {
+                  "version": {
+                    "type": "integer"
+                  },
+                  "domains": {
+                    "type": "array",
+                    "minItems": 5,
+                    "maxItems": 5,
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/domains/actions": {
+      "post": {
+        "summary": "按单个域名异步检测解析、申请SSL并启用、禁用；不支持批量操作",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "当前状态；操作返回 busy=true 后请轮询 GET",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/BackupDomains"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "输入错误、版本冲突、任务处理中或域名服务不可用"
+          },
+          "401": {
+            "description": "未登录"
+          },
+          "403": {
+            "description": "非管理员或跨站写请求"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "version",
+                  "index",
+                  "action"
+                ],
+                "properties": {
+                  "version": {
+                    "type": "integer"
+                  },
+                  "index": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "check",
+                      "enable",
+                      "disable"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/wallet/requests/{id}/detail": {
       "get": {
         "tags": [

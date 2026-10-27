@@ -13,6 +13,7 @@ import (
 )
 
 type HTTP struct {
+	DomainSocket    string
 	Draws           GameControlDrawReader
 	Store           *Store
 	SecureCookie    bool
@@ -483,6 +484,43 @@ func (h *HTTP) Bind(mux *http.ServeMux) {
 	}))
 	mux.HandleFunc("GET /api/v1/wallet/payment-settings", auth(false, func(w http.ResponseWriter, r *http.Request, u User) {
 		v, e := h.Store.DepositPaymentSettings(u.ID)
+		result(w, v, e)
+	}))
+	mux.HandleFunc("GET /api/v1/admin/domains", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		v, e := h.domainRequest(r.Context(), "GET", "/domains", nil)
+		result(w, v, e)
+	}))
+	mux.HandleFunc("PUT /api/v1/admin/domains", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		var in struct {
+			Version int      `json:"version"`
+			Domains []string `json:"domains"`
+		}
+		if e := decode(w, r, &in); e != nil {
+			result(w, nil, e)
+			return
+		}
+		if e := h.Store.recordDomainRequest(u.ID, "save.requested", in); e != nil {
+			result(w, nil, e)
+			return
+		}
+		v, e := h.domainRequest(r.Context(), "PUT", "/domains", map[string]any{"version": in.Version, "domains": in.Domains, "actor": u.Username})
+		result(w, v, e)
+	}))
+	mux.HandleFunc("POST /api/v1/admin/domains/actions", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {
+		var in struct {
+			Version int    `json:"version"`
+			Index   int    `json:"index"`
+			Action  string `json:"action"`
+		}
+		if e := decode(w, r, &in); e != nil {
+			result(w, nil, e)
+			return
+		}
+		if e := h.Store.recordDomainRequest(u.ID, "action.requested", in); e != nil {
+			result(w, nil, e)
+			return
+		}
+		v, e := h.domainRequest(r.Context(), "POST", "/domains/actions", map[string]any{"version": in.Version, "index": in.Index, "action": in.Action, "actor": u.Username})
 		result(w, v, e)
 	}))
 	mux.HandleFunc("GET /api/v1/admin/payment-settings", auth(true, func(w http.ResponseWriter, r *http.Request, u User) {

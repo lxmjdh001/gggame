@@ -5,6 +5,7 @@ import {api,APIError,user,refreshAccount,money,key,type PlaySetting,type Order} 
 import StakeAmount from './StakeAmount.vue'
 import RacingMarketBoard from './RacingMarketBoard.vue'
 import DiceMarketBoard from './DiceMarketBoard.vue'
+import DiceBetConfirmation from './DiceBetConfirmation.vue'
 import MarkSixMarketBoard from './MarkSixMarketBoard.vue'
 import {parseStake} from '../lib/stake'
 import {quoteID,usesZodiac} from '../lib/marksix'
@@ -14,6 +15,7 @@ import {oddsText,type Market,type MarketBook,type MarketBatchInput} from '../api
 const props=defineProps<{sessionId:string;playSetting?:PlaySetting;targetIssue:string;blocked:boolean;blockLabel?:string;compact?:boolean;racing?:boolean;dice?:boolean;initialAmount?:string}>()
 const emit=defineEmits<{notify:[message:string];login:[];busy:[busy:boolean]}>()
 const book=ref<MarketBook|null>(null),mode=ref<'two_sides'|'regular'>('two_sides'),position=ref(''),error=ref(''),loading=ref(true),busy=ref(false),amount=ref(props.initialAmount??'10')
+const diceConfirmOpen=ref(false)
 interface Selection {market:Market;odds:number;tierOdds?:Record<string,number>;unit:number}
 const chosen=ref<Selection[]>([]),requestKey=ref(key()),retryPayload=ref<MarketBatchInput|null>(null)
 const retryOwner=ref<{id:string;username:string}|null>(null)
@@ -41,6 +43,8 @@ const unavailable=computed(()=>chosen.value.some(c=>!quotes.value[quoteID(c.mark
 const invalidCost=(value:number)=>value<(props.playSetting?.unit_cents??200)||value>(props.playSetting?.max_stake_cents??100000)
 const invalidAmount=computed(()=>individualAmounts.value?chosen.value.some(c=>invalidCost(selectionCost(c.market.id))):invalidCost(cost.value))
 const submitDisabled=computed(()=>busy.value||(!retryPayload.value&&(props.blocked||!chosen.value.length||changed.value||unavailable.value||zodiacOutdated.value||!!error.value||invalidAmount.value)))
+const diceConfirmation=computed(()=>!!props.dice&&!props.racing&&!marksix.value)
+const placeDisabled=computed(()=>diceConfirmation.value?busy.value||!chosen.value.length||props.blocked&&!retryPayload.value:submitDisabled.value)
 const retryNotice=computed(()=>retryPayload.value?user.value?'投注结果待确认，请重试原订单':`投注结果待确认，请重新登录原账号 ${retryOwner.value?.username??''} 后重试原订单`:'')
 const racingNotice=computed(()=>retryNotice.value||error.value||(zodiacOutdated.value?'生肖资料与当前期号不一致，请等待同步后重新选择':unavailable.value?'部分已选选项已暂停，请移除后再提交':changed.value?'赔率或起投金额已变更，请确认最新赔率':props.blocked?(props.blockLabel??'暂不可投注'):invalidAmount.value&&chosen.value.length?`每项金额须为 ${money(props.playSetting?.unit_cents??200)}–${money(props.playSetting?.max_stake_cents??100000)} 元`:''))
 async function load() {
@@ -65,7 +69,8 @@ async function load() {
  }
 }
 
-function resetSelection(){chosen.value=[];selectionAmounts.value={};retryPayload.value=null;retryOwner.value=null;requestKey.value=key()}
+function resetSelection(){diceConfirmOpen.value=false;chosen.value=[];selectionAmounts.value={};retryPayload.value=null;retryOwner.value=null;requestKey.value=key()}
+watch(()=>chosen.value.length,count=>{if(!count)diceConfirmOpen.value=false},{flush:'sync'})
 watch(()=>props.sessionId,()=>{
  controller?.abort();controller=null;book.value=null;resetSelection();position.value='';compactGroup.value='';error.value='';loading.value=true
  void load()
@@ -74,6 +79,7 @@ watch(()=>props.targetIssue,(next,previous)=>{
  if(next!==previous&&!locked.value&&chosen.value.length){resetSelection();emit('notify','期号已更新，请重新选择本期投注')}
 })
 watch(()=>user.value?.id,(next,previous)=>{
+ if(previous&&next!==previous)diceConfirmOpen.value=false
  if(retryPayload.value){
   if(!next){emit('notify',retryNotice.value);return}
   if(next!==retryOwner.value?.id){
@@ -128,6 +134,12 @@ function confirmQuotes(){
  chosen.value=chosen.value.map(c=>quotes.value[quoteID(c.market)]?.enabled?{...c,odds:actualOdds(c.market),tierOdds:copyTierOdds(quotes.value[quoteID(c.market)]!.tier_odds_milli),unit:props.playSetting?.unit_cents??200}:c)
  requestKey.value=key()
 }
+function requestSubmit(){
+ if(!diceConfirmation.value){void submit();return}
+ if(busy.value||!chosen.value.length)return
+ chipsOpen.value=false;selectionOpen.value=false;diceConfirmOpen.value=true
+}
+function confirmDiceSubmit(){if(!diceConfirmOpen.value||busy.value)return;if(!user.value)diceConfirmOpen.value=false;void submit()}
 async function submit(){
  if(busy.value||!chosen.value.length)return
  if(!user.value){emit('login');return}
@@ -181,14 +193,15 @@ async function submit(){
 <p v-if="!racing && !marksix && (changed||unavailable)" class="form-error">{{unavailable?'部分已选选项已暂停，请移除后再提交。':'所选赔率或单注金额已变更，请确认最新赔率。'}} <button v-if="changed&&!unavailable" class="text-button" :disabled="locked" @click="confirmQuotes">确认最新赔率</button></p>
 <p v-if="!racing && !marksix && retryPayload&&!busy" class="form-error" role="alert">{{retryNotice}}。原 {{retryPayload.selections.length}} 注已保留，确认前暂不能修改选择或金额。</p>
 <div v-if="!racing && !marksix && (!compact || chipsOpen)" :class="{'compact-chip-drawer':compact}"><button v-if="compact" class="compact-drawer-close" @click="chipsOpen=false"><X :size="16"/>关闭筹码</button><StakeAmount v-model="amount" label="每注金额" :min="playSetting?.unit_cents??200" :max="playSetting?.max_stake_cents??100000" :disabled="locked"/></div>
-<div v-if="!racing && !marksix && !compact" class="market-submit"><div class="market-totals"><span>总投注金额 <b>{{money(total)}}</b></span><small>{{chosen.length}} 注 × 每注 {{money(cost)}} 元 · 分别结算</small></div><button class="primary-button" :disabled="submitDisabled" @click="submit">{{busy?'提交中…':retryPayload?'重试确认':blocked?(blockLabel??'暂不可投注'):!user?'登录后投注':`确认投注（${chosen.length}注）`}}<ChevronRight :size="17"/></button></div>
+<div v-if="!racing && !marksix && !compact" class="market-submit"><div class="market-totals"><span>总投注金额 <b>{{money(total)}}</b></span><small>{{chosen.length}} 注 × 每注 {{money(cost)}} 元 · 分别结算</small></div><button class="primary-button" :disabled="placeDisabled" @click="requestSubmit">{{busy?'提交中…':retryPayload?'重试确认':blocked?(blockLabel??'暂不可投注'):!user?'登录后投注':`确认投注（${chosen.length}注）`}}<ChevronRight :size="17"/></button></div>
 <div v-if="!racing && !marksix && compact" class="compact-bet-dock">
- <div class="compact-bet-input"><button :aria-expanded="selectionOpen" @click="selectionOpen=!selectionOpen;chipsOpen=false">已选中 {{chosen.length}} 注 <small>共 {{money(total)}} 元</small></button><input v-model="amount" :disabled="locked" inputmode="decimal" aria-label="每注金额（元）" placeholder="请输入每注金额"/></div>
- <button class="compact-place" :disabled="submitDisabled" @click="submit">{{busy?'提交中':retryPayload?'重试确认':blocked?'已封盘':!user?'登录':'下注'}}</button>
+ <div class="compact-bet-input"><button :aria-expanded="selectionOpen" @click="diceConfirmation?requestSubmit():(selectionOpen=!selectionOpen, chipsOpen=false)">已选中 {{chosen.length}} 注 <small>共 {{money(total)}} 元</small></button><input v-model="amount" :disabled="locked" inputmode="decimal" aria-label="每注金额（元）" placeholder="请输入每注金额"/></div>
+ <button class="compact-place" :disabled="placeDisabled" @click="requestSubmit">{{busy?'提交中':retryPayload?'重试确认':blocked?'已封盘':!user?'登录':'下注'}}</button>
  <button class="compact-chips" :aria-expanded="chipsOpen" @click="chipsOpen=!chipsOpen;selectionOpen=false">筹码</button>
  <button class="compact-reset" :disabled="locked" @click="resetSelection">重置</button>
  <p v-if="blocked||invalidAmount||changed||unavailable||retryPayload||error" class="compact-bet-hint" role="status">{{retryPayload?retryNotice:error?error:changed?'赔率已变更，请确认最新赔率':unavailable?'已选选项暂停，请移除':blocked?(blockLabel||'暂不可投注'):`每注金额范围 ${money(playSetting?.unit_cents??200)}–${money(playSetting?.max_stake_cents??100000)} 元`}}<button v-if="changed&&!unavailable" :disabled="locked" @click="confirmQuotes">确认最新赔率</button></p>
 </div>
+<DiceBetConfirmation v-if="diceConfirmOpen&&diceConfirmation" :selections="chosen" :issue="retryPayload?.issue??targetIssue" :amount="amount" :min="playSetting?.unit_cents??200" :max="playSetting?.max_stake_cents??100000" :total="total" :locked="locked" :busy="busy" :retrying="!!retryPayload" :logged-in="!!user" :submit-disabled="submitDisabled" :notice="racingNotice" :can-confirm-quotes="changed&&!unavailable" @close="!busy&&(diceConfirmOpen=false)" @amount="amount=$event" @remove="remove" @submit="confirmDiceSubmit" @confirm-quotes="confirmQuotes"/>
 </section></template>
 <style scoped>
 .market-selected-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;max-height:210px;overflow:auto;margin:0 24px 16px;padding:2px}

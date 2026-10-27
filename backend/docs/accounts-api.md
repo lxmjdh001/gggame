@@ -282,3 +282,6 @@ USDT充值的新页面只要求交易哈希后5位十六进制字符；服务端
 `POST /api/v1/admin/game-control/reset`：仅管理员可调用，提交 `{key}`。确认后将顶部今日盈亏、昨日盈亏、本月盈亏、当前总押注中金额四张卡片（含注数、投注、派彩、佣金）重新从零统计。服务端原子保存当前最大订单编号作为统计边界，重置后仅纳入新提交的订单；旧待结算订单后续正常结算但不重新进入这四项统计。边界持久化且对所有管理员生效，`GET /admin/game-control` 返回 `reset_at`。相同key重试返回原重置结果，不再次推进边界；每次新重置记入操作日志。
 
 此操作不删除或修改订单、资金流水、余额、冻结资金、佣金和开奖记录；下方场次数据及订单管理继续显示完整数据。
+
+
+备用网站：`GET /admin/domains` 显示主域名、服务器 IPv4、五个备用位置及状态；`PUT /admin/domains` 接受 `{version,domains:[五个域名或空字符串]}`；`POST /admin/domains/actions` 接受 `{version,index,action}`，index 为 0–4，每次仅操作一个域名，不支持批量，action 为 check / enable / disable。仅管理员可用，同源 JSON 保护及审计与其他后台接口一致。任务异步，返回 busy 后轮询 GET；不接受客户端 actor。服务未安装返回明确错误，不伪造 DNS/SSL 成功状态。部署及解析见 [备用网站部署文档](../../deploy/js18188/domains.md)。

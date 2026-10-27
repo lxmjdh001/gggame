@@ -1,0 +1,25 @@
+[Unit]
+Description=Starlight backup domain and SSL manager
+After=network-online.target nginx.service
+Wants=network-online.target
+Requires=nginx.service
+
+[Service]
+Type=simple
+User=root
+Group=starlight
+UMask=0022
+RuntimeDirectory=starlight-domains
+RuntimeDirectoryMode=0750
+Environment=DOMAIN_PRIMARY=js18188.com
+Environment=DOMAIN_IPV4=209.74.79.73
+ExecStart=/opt/starlight/current/bin/domain-manager
+Restart=on-failure
+RestartSec=5
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/starlight-domains /etc/nginx/conf.d /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /var/log/nginx /run/starlight-domains
+
+[Install]
+WantedBy=multi-user.target
