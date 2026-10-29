@@ -18,6 +18,7 @@ const props=defineProps<{mode:WalletKind}>()
 const emit=defineEmits<{back:[];login:[];notify:[message:string];busy:[busy:boolean]}>()
 const addressSaving=ref(false),receiptId=ref(''),receiptOwner=ref(''),accountsOpen=ref(true),bindingPinSetup=ref(false)
 const kind=ref<WalletKind>(props.mode),busy=ref(false),refreshing=ref(false),error=ref('')
+const depositView=ref<'usdt'|'online'>('usdt')
 const drafts=ref({deposit:{amount:'',note:''},withdraw:{amount:'',note:''}})
 const draft=computed(()=>drafts.value[kind.value])
 const usdtAmount=ref(''),transactionId=ref(''),manualTransactionId=ref(''),usdtNote=ref(''),withdrawalPassword=ref(''),withdrawalConfirmation=ref('')
@@ -73,6 +74,7 @@ watch(()=>user.value?.id,(next,previous)=>{
  if(next){void loadSettings();void loadWithdrawalSettings()}
 },{flush:'sync'})
 function switchKind(next:WalletKind){if(locked.value||kind.value===next)return;accountsOpen.value=true;kind.value=next;error.value='';withdrawalPassword.value='';withdrawalConfirmation.value='';currentPin.value='';newPin.value='';confirmPin.value='';pinSetupError.value='';pinSetupOpen.value=false}
+function selectDepositView(next:'usdt'|'online'){if(!locked.value)depositView.value=next}
 async function loadSettings(){
  const owner=user.value?.id;if(!owner)return
  settingsLoading.value=true
@@ -190,9 +192,9 @@ onUnmounted(()=>{mounted=false;emit('busy',false)})
    <template v-if="kind==='deposit'">
     <div class="wallet-balance"><div><span>可用余额</span><strong>{{user?money(user.balance_cents):'—'}}<small>元</small></strong></div><Wallet :size="25"/></div>
     <DepositChannels/>
-    <section class="wallet-method-section" aria-labelledby="wallet-method-heading"><h2 id="wallet-method-heading">充值方式</h2><div class="wallet-methods"><div class="wallet-method selected"><CreditCard :size="26"/><span>USDT 账户</span><Check :size="11"/></div></div><p v-if="!usdtAvailable" class="wallet-method-note">{{usdtUnavailable}}<button v-if="user" :disabled="settingsLoading||locked" @click="loadSettings">刷新</button></p></section>
+    <section class="wallet-method-section" aria-labelledby="wallet-method-heading"><h2 id="wallet-method-heading">充值方式</h2><div class="wallet-methods" role="group" aria-label="选择充值方式"><button type="button" class="wallet-method wallet-online-method" :class="{selected:depositView==='online'}" :aria-pressed="depositView==='online'" :disabled="locked" @click="selectDepositView('online')"><CreditCard :size="30" aria-hidden="true"/><span>在线支付</span><Check v-if="depositView==='online'" :size="11" aria-hidden="true"/></button><button type="button" class="wallet-method" :class="{selected:depositView==='usdt'}" :aria-pressed="depositView==='usdt'" :disabled="locked" @click="selectDepositView('usdt')"><span class="wallet-usdt-logo" aria-hidden="true"><img src="/payment-channels/brand-reference.jpg" alt="" width="1280" height="960"/></span><span>USDT 账户</span><Check v-if="depositView==='usdt'" :size="11" aria-hidden="true"/></button></div><p v-if="!usdtAvailable" class="wallet-method-note">{{usdtUnavailable}}<button v-if="user" :disabled="settingsLoading||locked" @click="loadSettings">刷新</button></p></section>
+    <section v-if="depositView==='online'&&activePayment" class="wallet-payment-qr" aria-label="充值收款二维码"><template v-if="activePayment.qr_code_data_url"><img :src="activePayment.qr_code_data_url" alt="USDT收款二维码"/><p>{{activePayment.network}}收款二维码 · 转账前请核对收款信息</p></template><p v-else role="status">暂未配置收款二维码，请按下方收款信息转账或联系客服。</p></section>
     <section v-if="activePayment" class="wallet-usdt-details" aria-label="USDT 收款信息"><div class="wallet-address-row"><span>收款地址</span><code>{{activePayment.address}}</code><button :disabled="locked" @click="copyAddress"><Copy :size="12"/>复制</button></div><div class="wallet-payment-row"><span>转账网络</span><strong>{{activePayment.network}}</strong></div><div class="wallet-payment-row"><span>USDT 汇率</span><strong>1 USDT = {{activePayment.rate_yuan}} 元</strong></div><div class="wallet-payment-row"><span>存款金额</span><strong>{{estimatedCents===null?'—':money(estimatedCents)}} 元</strong></div></section>
-    <section v-if="activePayment?.qr_code_data_url" class="wallet-payment-qr" aria-label="充值收款二维码"><img :src="activePayment.qr_code_data_url" alt="USDT收款二维码"/><p>{{activePayment.network}}收款二维码 · 转账前请核对收款信息</p></section>
    </template>
    <slot name="payment-details" :kind="kind" :locked="locked"/>
    <div v-if="showPinSetup" class="wallet-pin-heading"><span>{{needsPin?'提款前请先设置 6 位数字提现密码':'修改提现密码'}}</span><button v-if="!needsPin" :disabled="locked" @click="pinSetupOpen=false">收起</button></div>
@@ -229,6 +231,9 @@ onUnmounted(()=>{mounted=false;emit('busy',false)})
 </style>
 
 <style scoped>
+.wallet-method{color:#6f667b}.wallet-method:focus-visible{outline:2px solid #8764d1;outline-offset:4px}.wallet-method:not(:disabled):active{background:#f7f2ff}.wallet-online-method>svg:first-child{color:#d69895}.wallet-usdt-logo{position:relative;display:block;width:32px;height:32px;overflow:hidden;background:#fff;flex-shrink:0}
+/* Same USDT artwork/region as DepositChannels; preserve the supplied logo. */
+.wallet-usdt-logo img{position:absolute;width:379.259px;height:284.444px;max-width:none;max-height:none;left:-269.926px;top:-226.963px;pointer-events:none}
 .wallet-payment-qr{display:flex;flex-direction:column;align-items:center;padding:18px;margin:0 0 20px;background:#fcfaff;border:1px solid #ece5f5;border-radius:7px}.wallet-payment-qr img{width:192px;height:192px;max-width:100%;object-fit:contain;padding:8px;background:#fff}.wallet-payment-qr p{font-size:11px;color:#95849f;line-height:1.8;text-align:center;margin:10px 0 0}
 .wallet-wagering,.wallet-withdrawal-quote{padding:14px 12px;margin:0 0 20px;background:#faf8ff;border:1px solid #ece5f5;border-radius:5px;font-size:12px;line-height:1.8}.wallet-wagering>div,.wallet-withdrawal-quote>div{display:flex;justify-content:space-between;gap:12px;margin:5px 0}.wallet-wagering strong,.wallet-withdrawal-quote strong{font-weight:500;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.wallet-wagering p,.wallet-withdrawal-quote p{font-size:11px;color:#aa7685;margin:5px 0}.wallet-wagering .eligible{color:#438d61}.wallet-field select{flex:1;min-width:0;padding:12px 5px;border:1px solid #e5e2eb;background:#fff;color:#544d61;font-size:13px}.wallet-withdrawal-quote{margin-top:18px}
 </style>
