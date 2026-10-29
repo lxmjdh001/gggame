@@ -28,7 +28,7 @@ onMounted(()=>void load())
    </div>
    <PaymentQRCodeEditor v-model="config.qr_code_data_url" label="USDT充值二维码" :disabled="saving||loading" @busy="usdtQRBusy=$event"/>
    <p class="form-hint">充值和提现仅支持USDT。更改收款地址或网络会清除旧二维码，请上传与新地址对应的图片。</p>
-   <p class="form-hint">USDT 数量支持正整数，入账金额按提交时的汇率换算至分。客户只需填写交易 ID 后5位，后缀可能重复，不能单凭后缀认定到账。请在“资金审核”核对实际链上交易、网络、收款地址及金额，确认未重复入账后再通过。</p>
+   <p class="form-hint">USDT 数量支持正整数，入账金额按提交时的汇率换算至分。客户需填写完整交易 ID：TRC20 为64位十六进制字符，ERC20 为0x开头的66位交易哈希。历史仅填后5位的申请仍可审核，需核对完整转账凭证。请在“资金审核”核对实际链上交易、网络、收款地址及金额，确认未重复入账后再通过。</p>
    <p class="form-hint">修改设置只影响新申请；已提交申请保留原收款信息与汇率。停用后不再接受新的 USDT 申请。</p>
    <div class="payment-actions"><small>配置版本 {{config.version}}</small><button class="primary-button" :disabled="saving||loading||usdtQRBusy">{{saving?'保存中…':'保存收款设置'}}</button></div>
   </form>

@@ -1,6 +1,12 @@
 package accounts
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+
+	bolt "go.etcd.io/bbolt"
+)
 
 func TestLegacyExplicitDepositIsCountedWithoutRewritingLedger(t *testing.T) {
 	s, _, _ := fundsFixture(t)
@@ -64,14 +70,36 @@ func TestRepeatedDepositsPreserveAndAccumulateTurnover(t *testing.T) {
 	}
 }
 
-func TestUSDTSuffixCollisionReplayAndApproval(t *testing.T) {
+func TestLegacyUSDTSuffixCollisionReplayAndApproval(t *testing.T) {
 	s, _, _ := fundsFixture(t)
 	defer s.Close()
 	cfg := enabledUSDTSettings(t, s)
 	in := usdtSubmission(cfg, 1)
 	in.TransactionID = "Ab12F"
-	r, e := s.SubmitWalletRequest("member", in)
-	must(t, e)
+	// Seed already accepted records as persisted by the former five-character
+	// version, rather than allowing the new submission endpoint to create them.
+	seedLegacy := func(input WalletSubmission) WalletRequest {
+		var out WalletRequest
+		must(t, s.db.Update(func(tx *bolt.Tx) error {
+			amount, e := usdtAmountCents(input.USDTAmount, cfg.RateYuan)
+			if e != nil {
+				return e
+			}
+			out = WalletRequest{ID: seq(tx, "requests"), UserID: "member", Kind: "deposit", Amount: amount, Status: "pending", CreatedAt: time.Now(), PaymentMethod: "usdt", USDTAmount: input.USDTAmount, TransactionID: strings.ToLower(input.TransactionID), SettingsVersion: cfg.Version, PaymentNetwork: cfg.Network, PaymentAddress: cfg.Address, RateYuan: cfg.RateYuan}
+			if e = put(tx, "requests", out.ID, out); e != nil {
+				return e
+			}
+			if e = tx.Bucket([]byte("payment_transactions")).Put([]byte(usdtRequestTransactionKey(cfg.Network, out.TransactionID, out.ID)), []byte(out.ID)); e != nil {
+				return e
+			}
+			return remember(tx, "request:member", input.Key, out.ID, input)
+		}))
+		return out
+	}
+	if _, e := s.SubmitWalletRequest("member", in); e == nil {
+		t.Fatal("new suffix request accepted")
+	}
+	r := seedLegacy(in)
 	retry, e := s.SubmitWalletRequest("member", in)
 	must(t, e)
 	if r.ID != retry.ID || r.TransactionID != "ab12f" {
@@ -79,8 +107,10 @@ func TestUSDTSuffixCollisionReplayAndApproval(t *testing.T) {
 	}
 	other := in
 	other.Key = randomID()
-	r2, e := s.SubmitWalletRequest("member", other)
-	must(t, e)
+	if _, e := s.SubmitWalletRequest("member", other); e == nil {
+		t.Fatal("new suffix request accepted")
+	}
+	r2 := seedLegacy(other)
 	if r2.ID == r.ID {
 		t.Fatal("suffix used as global transaction identity")
 	}

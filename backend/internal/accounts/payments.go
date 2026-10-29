@@ -218,14 +218,6 @@ func usdtAmountCents(quantity, rate string) (int64, error) {
 
 func usdtTransactionID(network, value string) (string, error) {
 	value = strings.TrimSpace(value)
-	if (network == "TRC20" || network == "ERC20") && len(value) == 5 {
-		for _, c := range value {
-			if !strings.ContainsRune("0123456789abcdefABCDEF", c) {
-				return "", errors.New("请填写交易 ID 后5位（十六进制字符）")
-			}
-		}
-		return strings.ToLower(value), nil
-	}
 	switch network {
 	case "TRC20":
 		if transactionPattern.MatchString(value) {
@@ -236,7 +228,22 @@ func usdtTransactionID(network, value string) (string, error) {
 			return strings.ToLower(value), nil
 		}
 	}
-	return "", errors.New("请填写交易 ID 后5位；历史完整交易哈希仍兼容")
+	return "", errors.New("请填写完整交易 ID：TRC20 为64位十六进制字符，ERC20 为0x开头的66位交易哈希")
+}
+
+// Previously accepted suffix requests remain reviewable; only immutable stored
+// requests may use this parser. New submissions require the full hash above.
+func storedUSDTTransactionID(network, value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if (network == "TRC20" || network == "ERC20") && len(value) == 5 {
+		for _, c := range value {
+			if !strings.ContainsRune("0123456789abcdefABCDEF", c) {
+				return "", errors.New("请填写交易 ID 后5位（十六进制字符）")
+			}
+		}
+		return strings.ToLower(value), nil
+	}
+	return usdtTransactionID(network, value)
 }
 
 // A suffix is only a manual reconciliation hint, never a globally unique hash.
@@ -344,7 +351,7 @@ func (s *Store) createUSDTRequest(id string, in WalletSubmission) (WalletRequest
 		}
 		index := tx.Bucket([]byte("payment_transactions"))
 		transactionKey := usdtTransactionKey(cfg.Network, transactionID)
-		if ref := index.Get([]byte(transactionKey)); len(transactionID) != 5 && ref != nil {
+		if ref := index.Get([]byte(transactionKey)); ref != nil {
 			previous, err := get[WalletRequest](tx, "requests", string(ref))
 			if err != nil {
 				return err
@@ -373,7 +380,7 @@ func validateUSDTApproval(tx *bolt.Tx, r WalletRequest) error {
 	if r.PaymentMethod != "usdt" || r.Kind != "deposit" {
 		return nil
 	}
-	transactionID, err := usdtTransactionID(r.PaymentNetwork, r.TransactionID)
+	transactionID, err := storedUSDTTransactionID(r.PaymentNetwork, r.TransactionID)
 	if err != nil || r.Kind != "deposit" || r.SettingsVersion < 1 {
 		return errors.New("USDT 充值记录不完整，无法入账")
 	}
