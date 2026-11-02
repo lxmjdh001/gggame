@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -139,7 +140,13 @@ func TestUSDTSettingsAndFixedPrecisionValidation(t *testing.T) {
 		{"3", "7.005", 2102}, {"1000000", "0.000001", 100}, {"1000000", "1", 100000000},
 		{"1", "1000000", 100000000}, {"1", "0.995", 100},
 		{"1", "0.994999", 0}, {"1000001", "1", 0}, {"9223372036854775807", "1000000", 0},
-		{"9223372036854775808", "1", 0}, {"1.5", "7", 0}, {"01", "7", 0}, {"0", "7", 0},
+		{"9223372036854775808", "1", 0}, {"1.5", "7", 1050}, {"01", "7", 0}, {"0", "7", 0},
+		{"985.5", "6.9", 679995}, {"985.500000", "6.9", 679995}, {"985.5", "7.005", 690343},
+		{"0.5", "6.9", 345}, {"0.000001", "1000000", 100}, {"0.999999", "1.000001", 100},
+		{"1.005", "1", 101}, {"1.004999", "1", 100}, {"999999.999999", "1", 100000000},
+		{"0.144927", "6.9", 100}, {"0.144202", "6.9", 0}, {"1000000.01", "1", 0},
+		{"0.000000", "7", 0}, {"1.0000001", "7", 0}, {"1.", "7", 0}, {".5", "7", 0},
+		{"01.5", "7", 0}, {"+1.5", "7", 0}, {"-1.5", "7", 0}, {"1,5", "7", 0},
 		{"-1", "7", 0}, {"1e3", "7", 0}, {" 1", "7", 0}, {"1", "NaN", 0},
 		{"1", "0", 0}, {"1", "-7", 0}, {"1", "7e0", 0}, {"1", "7.0000001", 0}, {"1", "1000000.000001", 0},
 	} {
@@ -367,7 +374,7 @@ func TestUSDTInvalidRequestsDoNotWriteAndApprovalChecksClaim(t *testing.T) {
 		func(in *WalletSubmission) { in.Kind = "withdraw" },
 		func(in *WalletSubmission) { in.PaymentMethod = "unknown" },
 		func(in *WalletSubmission) { in.PaymentMethod = "" },
-		func(in *WalletSubmission) { in.USDTAmount = "1.1" },
+		func(in *WalletSubmission) { in.USDTAmount = "1.1234567" },
 		func(in *WalletSubmission) { in.USDTAmount = "9999999999999999999" },
 		func(in *WalletSubmission) { in.SettingsVersion-- },
 		func(in *WalletSubmission) { in.Key = "short" },
@@ -625,4 +632,58 @@ func TestUSDTWalletWithdrawalPINAndSafeReplay(t *testing.T) {
 	assertFunds(t, s, "member", 97000, 0, 3000)
 	must(t, s.ReviewRequest("admin", r.ID, "approved", "核对提现完成"))
 	assertFunds(t, s, "member", 97000, 0, 0)
+}
+
+func TestUSDTDecimalRequestSnapshotsRetryAndCredit(t *testing.T) {
+	s, _, _ := fundsFixture(t)
+	defer s.Close()
+	cfg := enabledUSDTSettings(t, s)
+	cfg.RateYuan = "6.9"
+	cfg, err := s.SavePaymentSettings("admin", cfg)
+	must(t, err)
+	in := usdtSubmission(cfg, 9855)
+	in.USDTAmount = "985.5"
+	request, err := s.SubmitWalletRequest("member", in)
+	must(t, err)
+	if request.Amount != 679995 || request.USDTAmount != "985.5" || request.RateYuan != "6.9" {
+		t.Fatal("decimal quantity or cent conversion lost", request)
+	}
+	assertFunds(t, s, "member", 100000, 0, 0)
+	// Invalid precision and configured limits reject the whole submission without writes.
+	for i, quantity := range []string{"0.000000", "985.1234567", "0.1", "1000000.1"} {
+		bad := usdtSubmission(cfg, 10000+i)
+		bad.USDTAmount = quantity
+		before := markSixCombinedStoredState(t, s)
+		if _, err = s.SubmitWalletRequest("member", bad); err == nil {
+			t.Fatal("invalid decimal accepted", quantity)
+		}
+		if !reflect.DeepEqual(before, markSixCombinedStoredState(t, s)) {
+			t.Fatal("rejected decimal changed state", quantity)
+		}
+	}
+	changed := in
+	changed.USDTAmount = "985.50"
+	if _, err = s.SubmitWalletRequest("member", changed); err == nil {
+		t.Fatal("changed quantity reused original idempotency key")
+	}
+	cfg.RateYuan = "7.1"
+	cfg.MinAmountCents = 1000000
+	_, err = s.SavePaymentSettings("admin", cfg)
+	must(t, err)
+	replay, err := s.SubmitWalletRequest("member", in)
+	must(t, err)
+	if !sameWalletRequest(t, request, replay) {
+		t.Fatal("retry replaced original decimal or rate", replay)
+	}
+	must(t, s.ReviewRequest("admin", request.ID, "approved", "核对小数数量及交易到账"))
+	if err = s.ReviewRequest("admin", request.ID, "approved", "再次核对"); err == nil {
+		t.Fatal("decimal deposit credited twice")
+	}
+	assertFunds(t, s, "member", 779995, 0, 0)
+	a, err := s.Account("member")
+	must(t, err)
+	entries := a["ledger"].([]Ledger)
+	if len(entries) != 1 || entries[0].Amount != 679995 || entries[0].Reference != request.ID {
+		t.Fatal(entries)
+	}
 }

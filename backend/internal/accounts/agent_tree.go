@@ -19,6 +19,9 @@ type AgentNode struct {
 	CreatedAt       time.Time `json:"created_at"`
 	InviterID       string    `json:"inviter_id,omitempty"`
 	InviterUsername string    `json:"inviter_username,omitempty"`
+	InviterDeleted  bool      `json:"inviter_deleted,omitempty"`
+	DisplayParentID string    `json:"display_parent_id"`
+	VisibleChildren int       `json:"visible_child_count"`
 	MissingParent   bool      `json:"missing_parent"`
 	Deposit         int64     `json:"deposit_cents"`
 	DirectCount     int       `json:"direct_count"`
@@ -110,6 +113,7 @@ func (s *Store) agentTreeSnapshot(actor, username, parentID string, page int, no
 		for id, n := range nodes {
 			if p := nodes[n.InviterID]; p != nil {
 				n.InviterUsername = p.Username
+				n.InviterDeleted = p.Status == "deleted"
 				children[p.ID] = append(children[p.ID], id)
 			} else {
 				n.MissingParent = n.InviterID != ""
@@ -118,8 +122,12 @@ func (s *Store) agentTreeSnapshot(actor, username, parentID string, page int, no
 		}
 		queue := []string{}
 		for id, n := range nodes {
-			n.DirectCount = len(children[id])
-			pending[id] = n.DirectCount
+			for _, child := range children[id] {
+				if nodes[child].Status != "deleted" {
+					n.DirectCount++
+				}
+			}
+			pending[id] = len(children[id])
 			if pending[id] == 0 {
 				queue = append(queue, id)
 			}
@@ -127,7 +135,10 @@ func (s *Store) agentTreeSnapshot(actor, username, parentID string, page int, no
 		for i := 0; i < len(queue); i++ {
 			n := nodes[queue[i]]
 			if p := nodes[n.InviterID]; p != nil {
-				p.TeamCount += n.TeamCount + 1
+				p.TeamCount += n.TeamCount
+				if n.Status != "deleted" {
+					p.TeamCount++
+				}
 				p.TeamDeposit += n.TeamDeposit + n.Deposit
 				p.TeamTodayStake += n.TeamTodayStake + n.TodayStake
 				pending[p.ID]--
@@ -139,22 +150,48 @@ func (s *Store) agentTreeSnapshot(actor, username, parentID string, page int, no
 		if len(queue) != len(nodes) {
 			return errors.New("代理邀请关系存在循环，请联系管理员核对")
 		}
-		ids := roots
+		// Hide archived nodes only in this read projection. Walk through them to
+		// retain living descendants; never rewrite the stored inviter relationship.
+		visibleRoots := []string{}
+		visibleChildren := map[string][]string{}
+		queue = append([]string(nil), roots...)
+		for i := 0; i < len(queue); i++ {
+			n := nodes[queue[i]]
+			displayParent := n.DisplayParentID
+			if n.Status != "deleted" {
+				if displayParent == "" {
+					visibleRoots = append(visibleRoots, n.ID)
+				} else {
+					visibleChildren[displayParent] = append(visibleChildren[displayParent], n.ID)
+				}
+				displayParent = n.ID
+			}
+			for _, child := range children[n.ID] {
+				nodes[child].DisplayParentID = displayParent
+				queue = append(queue, child)
+			}
+		}
+		for id, n := range nodes {
+			n.VisibleChildren = len(visibleChildren[id])
+		}
+		ids, scopeIDs := visibleRoots, roots
 		if username != "" {
 			id, ok := byName[strings.ToLower(username)]
-			if !ok {
+			if !ok || nodes[id].Status == "deleted" {
 				return ErrNotFound
 			}
 			ids = []string{id}
+			scopeIDs = ids
 		}
 		if parentID != "" {
 			p := nodes[parentID]
-			if p == nil {
+			if p == nil || p.Status == "deleted" {
 				return ErrNotFound
 			}
 			copy := *p
 			out.Parent = &copy
-			ids = children[parentID]
+			ids = visibleChildren[parentID]
+			scopeIDs = children[parentID]
 		}
 		sort.Slice(ids, func(i, j int) bool {
 			a, b := nodes[ids[i]], nodes[ids[j]]
@@ -164,7 +201,7 @@ func (s *Store) agentTreeSnapshot(actor, username, parentID string, page int, no
 			return a.CreatedAt.Before(b.CreatedAt)
 		})
 		out.Total = len(ids)
-		for _, id := range ids {
+		for _, id := range scopeIDs {
 			out.TodayStake += nodes[id].TodayStake + nodes[id].TeamTodayStake
 		}
 		if full {
@@ -173,7 +210,7 @@ func (s *Store) agentTreeSnapshot(actor, username, parentID string, page int, no
 			for i := 0; i < len(queue); i++ {
 				id := queue[i]
 				out.Items = append(out.Items, *nodes[id])
-				next := children[id]
+				next := visibleChildren[id]
 				sort.Slice(next, func(i, j int) bool { return next[i] < next[j] })
 				queue = append(queue, next...)
 			}

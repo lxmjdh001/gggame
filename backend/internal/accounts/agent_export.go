@@ -20,6 +20,9 @@ type AgentExportNode struct {
 	Username        string `json:"username"`
 	InviterID       string `json:"inviter_id"`
 	InviterUsername string `json:"inviter_username"`
+	InviterDeleted  bool   `json:"inviter_deleted,omitempty"`
+	DisplayParentID string `json:"display_parent_id"`
+	VisibleChildren int    `json:"visible_child_count"`
 	Status          string `json:"status"`
 	MissingParent   bool   `json:"missing_parent"`
 	Deposit         int64  `json:"deposit_cents"`
@@ -45,7 +48,7 @@ func (s *Store) agentExportAt(actor, username string, now time.Time) (AgentExpor
 		return out, err
 	}
 	for _, n := range p.Items {
-		out.Items = append(out.Items, AgentExportNode{n.ID, n.Username, n.InviterID, n.InviterUsername, n.Status, n.MissingParent, n.Deposit, n.DirectCount, n.TeamCount, n.TeamDeposit, n.TodayStake, n.TeamTodayStake})
+		out.Items = append(out.Items, AgentExportNode{ID: n.ID, Username: n.Username, InviterID: n.InviterID, InviterUsername: n.InviterUsername, InviterDeleted: n.InviterDeleted, DisplayParentID: n.DisplayParentID, VisibleChildren: n.VisibleChildren, Status: n.Status, MissingParent: n.MissingParent, Deposit: n.Deposit, DirectCount: n.DirectCount, TeamCount: n.TeamCount, TeamDeposit: n.TeamDeposit, TodayStake: n.TodayStake, TeamTodayStake: n.TeamTodayStake})
 	}
 	return out, nil
 }
@@ -166,7 +169,9 @@ func agentXLSX(v AgentExport) ([]byte, error) {
 			}
 		}
 		parent := n.InviterUsername
-		if n.MissingParent {
+		if n.InviterDeleted {
+			parent = "原上级已删除"
+		} else if n.MissingParent {
 			parent = "记录缺失"
 		} else if parent == "" {
 			parent = "无上级"
@@ -193,7 +198,7 @@ func agentXLSX(v AgentExport) ([]byte, error) {
 	if scope == "" {
 		scope = "全部账号"
 	}
-	for i, pair := range [][2]string{{"统计日期（北京时间）", v.Day}, {"导出时间（北京时间）", v.ExportedAt}, {"导出范围（scope）", scope}, {"今日总流水(元，含本人)", fmt.Sprintf("%d.%02d", v.TodayStake/100, v.TodayStake%100)}, {"统计口径", "下级人数、下级充值及下级流水均不含本人。今日总流水为导出范围内每个账号个人今日流水之和；不可逐行累加下级流水或团队含本人金额，以免重复计算。"}} {
+	for i, pair := range [][2]string{{"统计日期（北京时间）", v.Day}, {"导出时间（北京时间）", v.ExportedAt}, {"导出范围（scope）", scope}, {"今日总流水(元，含本人)", fmt.Sprintf("%d.%02d", v.TodayStake/100, v.TodayStake%100)}, {"统计口径", "下级数据不含本人；人数排除已删除账号，直属人数按真实邀请关系统计。已删除账号不导出，其未删除下级仍保留，展示连线跳过已删除中间节点，不改变实际上级。充值及流水保留范围内已删除账号的历史金额；不可逐行累加下级流水或团队含本人金额，以免重复计算。"}} {
 		fmt.Fprintf(&metadata, `<row r="%d">`, i+1)
 		for j, value := range pair {
 			if i == 3 && j == 1 {

@@ -158,10 +158,13 @@ func TestMemberDeletionPreservesHistoryTreeAndCredentials(t *testing.T) {
 			t.Fatal("private credential leaked")
 		}
 	}
-	tree, e := s.AgentTree(root.ID, u.Username, "", 1)
+	if _, e = s.AgentTree(root.ID, u.Username, "", 1); e != ErrNotFound {
+		t.Fatal("deleted member still searchable in tree", e)
+	}
+	tree, e := s.AgentTree(root.ID, "", root.ID, 1)
 	must(t, e)
-	if tree.Items[0].Status != "deleted" || tree.Items[0].DirectCount != 1 {
-		t.Fatal("tree lost archived parent", tree)
+	if tree.Total != 1 || tree.Items[0].ID != child.ID || tree.Items[0].InviterID != u.ID || !tree.Items[0].InviterDeleted || tree.Items[0].DisplayParentID != root.ID || tree.Parent.DirectCount != 0 || tree.Parent.TeamCount != 1 {
+		t.Fatal("visible child lost or archived parent counted", tree)
 	}
 	if managementStored(t, s, child.ID).InviterID != u.ID {
 		t.Fatal("child silently reparented")

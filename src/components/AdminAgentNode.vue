@@ -5,7 +5,7 @@ import {money} from '../api/account'
 import {loadAgents,type AgentNode} from '../api/agents'
 const props=defineProps<{node:AgentNode&{deleted?:boolean};initialOpen?:boolean}>()
 const emit=defineEmits<{focus:[username:string]}>()
-const expanded=ref(false),busy=ref(false),error=ref(''),children=ref<AgentNode[]>([]),page=ref(0),total=ref(props.node.direct_count)
+const expanded=ref(false),busy=ref(false),error=ref(''),children=ref<AgentNode[]>([]),page=ref(0),total=ref(props.node.visible_child_count??props.node.direct_count)
 let generation=0
 async function load(){
  if(busy.value)return
@@ -15,7 +15,7 @@ async function load(){
  finally{if(ticket===generation)busy.value=false}
 }
 function toggle(){expanded.value=!expanded.value;if(expanded.value&&page.value===0)void load()}
-onMounted(()=>{if(props.initialOpen&&props.node.direct_count)toggle()})
+onMounted(()=>{if(props.initialOpen&&(props.node.visible_child_count??props.node.direct_count))toggle()})
 onUnmounted(()=>generation++)
 </script>
 <template>
@@ -23,19 +23,19 @@ onUnmounted(()=>generation++)
   <article class="agent-card" :class="{disabled:node.status==='disabled'||node.status==='deleted'||node.deleted}">
    <dl>
     <div><dt>用户名</dt><dd><button class="agent-account" :title="`以 ${node.username} 为根查看团队`" @click="emit('focus',node.username)">{{node.username}}</button><span v-if="node.deleted||node.status==='deleted'" class="badge deleted">已删除</span></dd></div>
-    <div><dt>上级</dt><dd><button v-if="node.inviter_username" class="agent-link" @click="emit('focus',node.inviter_username)">{{node.inviter_username}}</button><span v-else>{{node.missing_parent?'记录缺失':'无上级'}}</span></dd></div>
+    <div><dt>上级</dt><dd><button v-if="node.inviter_username&&!node.inviter_deleted" class="agent-link" @click="emit('focus',node.inviter_username)">{{node.inviter_username}}</button><span v-else>{{node.inviter_deleted?'原上级已删除':node.missing_parent?'记录缺失':'无上级'}}</span></dd></div>
     <div><dt>个人累计充值</dt><dd>{{money(node.deposit_cents)}} 元</dd></div>
     <div><dt>直属 / 全部下级</dt><dd>{{node.direct_count}} / {{node.team_count}} 人</dd></div>
     <div><dt>下级累计充值</dt><dd>{{money(node.team_deposit_cents)}} 元</dd></div>
    </dl>
-   <button v-if="node.direct_count" class="agent-expand" :aria-expanded="expanded" :aria-label="`${expanded?'收起':'展开'} ${node.username} 的下级`" @click="toggle"><component :is="expanded?ChevronDown:ChevronRight" :size="12"/>{{expanded?'收起':'展开'}} {{node.direct_count}}</button>
+   <button v-if="node.visible_child_count??node.direct_count" class="agent-expand" :aria-expanded="expanded" :aria-label="`${expanded?'收起':'展开'} ${node.username} 的下级`" @click="toggle"><component :is="expanded?ChevronDown:ChevronRight" :size="12"/>{{expanded?'收起':'展开'}} {{node.visible_child_count??node.direct_count}}</button>
   </article>
-  <ul v-if="expanded" class="agent-children" :aria-label="`${node.username} 的直属下级`">
+  <ul v-if="expanded" class="agent-children" :aria-label="`${node.username} 的下级`">
    <AdminAgentNode v-for="child in children" :key="child.id" :node="child" @focus="emit('focus',$event)"/>
    <li v-if="busy" class="branch-message" role="status">正在读取下级…</li>
    <li v-if="error" class="branch-message" role="alert">{{error}} <button @click="load">重试</button></li>
    <li v-else-if="!busy&&children.length<total" class="branch-message"><button @click="load">加载更多下级（已显示{{children.length}} / {{total}}）</button></li>
-   <li v-if="!busy&&!error&&!total" class="branch-message">暂无直属下级</li>
+   <li v-if="!busy&&!error&&!total" class="branch-message">暂无下级</li>
   </ul>
  </li>
 </template>

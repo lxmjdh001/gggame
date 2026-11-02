@@ -752,8 +752,8 @@
           },
           "usdt_amount": {
             "type": "string",
-            "pattern": "^[1-9][0-9]{0,18}$",
-            "description": "正整数 USDT 数量字符串，不接受小数、科学计数法或前导零；不得超过 int64 最大值，折算后仍须符合充值限额。"
+            "pattern": "^(0|[1-9][0-9]{0,18})(\\.[0-9]{1,6})?$",
+            "description": "大于0的 USDT 数量字符串，支持最多6位小数，例如985.5或0.5；不接受科学计数法或多余前导零。按提交时汇率精确换算并四舍五入到人民币分，折算后仍须符合充值限额。"
           },
           "transaction_id": {
             "type": "string",
@@ -864,7 +864,7 @@
           },
           "usdt_amount": {
             "type": "string",
-            "description": "提交时的整数 USDT 数量。"
+            "description": "提交时的 USDT 数量字符串，支持整数或最多6位小数。"
           },
           "transaction_id": {
             "type": "string",

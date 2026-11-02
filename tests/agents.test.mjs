@@ -71,3 +71,10 @@ test('admin tree is reachable through its own backend tab and scrollable chart',
  assert.match(tree,/role="region"/);assert.match(tree,/tabindex="0"/);assert.match(tree,/overflow:auto/)
  for(const p of ['AdminAgents.vue','AdminAgentNode.vue'])assert.equal(parse(read('src/components/'+p)).errors.length,0)
 })
+test('surviving descendants remain expandable when every actual direct child is deleted',async()=>{
+ const h=harness('AdminAgentNode.vue',async()=>({page:1,total:1,items:[{id:'grandchild',display_parent_id:'root',inviter_id:'deleted-child',inviter_deleted:true}]}),{node:{id:'root',direct_count:0,visible_child_count:1},initialOpen:true})
+ try{
+  await settle();assert.equal(h.calls.length,1);assert.equal(h.calls[0].parent_id,'root')
+  assert.equal(h.s.expanded.value,true);assert.equal(h.s.children.value[0].id,'grandchild')
+ }finally{h.close()}
+})

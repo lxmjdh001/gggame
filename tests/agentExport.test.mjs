@@ -119,3 +119,13 @@ test('export API preserves auth errors, validates files and sends no pagination'
  response={ok:false,status:401,json:async()=>({error:{message:'登录已过期'}})}
  await assert.rejects(api.exportAgents('','xlsx',new AbortController().signal),/登录已过期/);assert.equal(user.value,null);assert.equal(account.value,null)
 })
+test('export connects surviving descendants across archived intermediates without changing true inviter',()=>{
+ const data=snapshot([node('root','',{direct_count:0,team_count:1,visible_child_count:1,display_parent_id:''}),node('survivor','archived-parent',{display_parent_id:'root',inviter_deleted:true})])
+ const image=lib.agentRelationSVG(data)
+ assert.equal((image.svg.match(/<g transform=/g)||[]).length,2)
+ assert.equal((image.svg.match(/<path d="M\d/g)||[]).length,3)
+ assert.match(image.svg,/原上级已删除/);assert.doesNotMatch(image.svg,/archived-parent/)
+ assert.match(image.svg,/0 \/ 1 人/);assert.equal(data.items[1].inviter_id,'archived-parent')
+ const scope=lib.agentRelationSVG(snapshot([node('survivor','archived-parent',{display_parent_id:'outside-scope',inviter_deleted:true})]))
+ assert.equal((scope.svg.match(/<g transform=/g)||[]).length,1)
+})

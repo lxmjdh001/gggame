@@ -167,6 +167,10 @@ func (s *Store) accountAt(id string, now time.Time) (map[string]any, error) {
 	return out, err
 }
 func (s *Store) AdminData(actor, resource, query string, page int) (map[string]any, error) {
+	return s.adminDataAt(actor, resource, query, page, time.Now())
+}
+
+func (s *Store) adminDataAt(actor, resource, query string, page int, now time.Time) (map[string]any, error) {
 	out := map[string]any{}
 	err := s.db.View(func(tx *bolt.Tx) error {
 		if e := admin(tx, actor); e != nil {
@@ -281,7 +285,17 @@ func (s *Store) AdminData(actor, resource, query string, page int) (map[string]a
 				return e
 			}
 			var balance, frozen int64
+			userCount, todayNewMembers := 0, 0
+			local := now.In(model.Beijing)
+			dayStart := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, model.Beijing)
+			dayEnd := dayStart.AddDate(0, 0, 1)
 			for _, u := range users {
+				if !u.Deleted {
+					userCount++
+					if u.Role == "user" && !u.CreatedAt.Before(dayStart) && u.CreatedAt.Before(dayEnd) {
+						todayNewMembers++
+					}
+				}
 				balance += u.Balance
 				frozen += u.Frozen
 			}
@@ -318,7 +332,7 @@ func (s *Store) AdminData(actor, resource, query string, page int) (map[string]a
 			for _, c := range commissions {
 				ct += c.Amount
 			}
-			out = map[string]any{"users": len(users), "orders": len(orders), "pending_orders": pendingOrders, "pending_requests": pendingRequests, "balance_cents": balance, "frozen_cents": frozen, "betting_frozen_cents": bettingFrozen, "valid_stake_cents": stake, "commission_cents": ct}
+			out = map[string]any{"users": userCount, "today_new_members": todayNewMembers, "orders": len(orders), "pending_orders": pendingOrders, "pending_requests": pendingRequests, "balance_cents": balance, "frozen_cents": frozen, "betting_frozen_cents": bettingFrozen, "valid_stake_cents": stake, "commission_cents": ct}
 			return nil
 		default:
 			return ErrNotFound

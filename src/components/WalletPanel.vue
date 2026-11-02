@@ -4,6 +4,7 @@ import WalletWithdrawalForm from './WalletWithdrawalForm.vue'
 import WithdrawalReceipt from './WithdrawalReceipt.vue'
 import WalletWithdrawalAccounts from './WalletWithdrawalAccounts.vue'
 import DepositChannels from './DepositChannels.vue'
+import {validUSDTQuantity,usdtDepositCents} from '../lib/usdtDeposit'
 import type {WithdrawalAddress} from '../api/wallet'
 import {computed,onMounted,onUnmounted,ref,watch} from 'vue'
 import {Check,ChevronDown,ChevronLeft,Copy,CreditCard,FileText,LockKeyhole,RefreshCw,Wallet} from 'lucide-vue-next'
@@ -42,14 +43,7 @@ const isUsdt=computed(()=>kind.value==='deposit')
 const activePayment=computed(()=>pending.value?.payment??(settings.value?.enabled?settings.value:null))
 const usdtAvailable=computed(()=>!!activePayment.value)
 const usdtUnavailable=computed(()=>!user.value?'登录后查看 USDT 通道':settingsLoading.value?'正在读取支付配置':settingsError.value||'USDT 通道暂未开放')
-const estimatedCents=computed(()=>{
- const rate=activePayment.value?.rate_yuan
- if(!rate||!/^\d+(\.\d{1,6})?$/.test(rate)||!/^\d{1,15}$/.test(usdtAmount.value.trim()))return null
- const [whole,fraction='']=rate.split('.')
- const scaled=BigInt(whole!)*1000000n+BigInt(fraction.padEnd(6,'0'))
- const value=(BigInt(usdtAmount.value.trim())*scaled+5000n)/10000n
- return value<=BigInt(Number.MAX_SAFE_INTEGER)?Number(value):null
-})
+const estimatedCents=computed(()=>activePayment.value?usdtDepositCents(usdtAmount.value.trim(),activePayment.value.rate_yuan):null)
 const pendingNotice=computed(()=>pending.value?user.value?'申请结果待确认，请重试原申请，重复确认不会重复提交。':`申请结果待确认，请重新登录原账号 ${pending.value.owner.username} 后重试。`:'')
 const pendingCount=computed(()=>account.value?.requests.filter(r=>r.status==='pending').length??0)
 const walletLabel=(value:string)=>({deposit:'存款',withdraw:'提款',withdraw_hold:'提款冻结',withdraw_approved:'提款完成',withdraw_rejected:'提款解冻',deposit_approved:'存款入账'}[value]??labels[value]??value)
@@ -131,7 +125,7 @@ async function submit(){
    if(isUsdt.value){
     payment=activePayment.value??undefined
     if(!payment)throw new Error('USDT 通道暂不可用，请刷新支付配置')
-    if(!/^[1-9]\d{0,14}$/.test(usdtAmount.value.trim()))throw new Error('请输入正整数 USDT 数量')
+    if(!validUSDTQuantity(usdtAmount.value.trim()))throw new Error('请输入大于 0 的 USDT 数量，最多保留 6 位小数')
     if(estimatedCents.value===null||estimatedCents.value<payment.min_amount_cents||estimatedCents.value>payment.max_amount_cents)throw new Error(`存款金额须在 ${money(payment.min_amount_cents)}–${money(payment.max_amount_cents)} 元范围内`)
     const hash=transactionId.value.trim()
     if(!(payment.network==='ERC20'?/^0x[a-fA-F0-9]{64}$/:/^[a-fA-F0-9]{64}$/).test(hash))throw new Error(payment.network==='ERC20'?'请填写完整交易 ID（0x开头，共66位）':'请填写完整交易 ID（64位十六进制字符）')
@@ -201,11 +195,11 @@ onUnmounted(()=>{mounted=false;emit('busy',false)})
    <form v-if="showPinSetup" class="wallet-pin-setup" @submit.prevent="saveWithdrawalPassword"><h2>{{needsPin?'设置提现密码':'修改提现密码'}}</h2><label v-if="!needsPin" class="wallet-field"><span>原提现密码</span><input v-model="currentPin" :disabled="locked" type="password" inputmode="numeric" required pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="off" placeholder="请输入原 6 位数字提现密码"/></label><label class="wallet-field"><span>提现密码</span><input v-model="newPin" :disabled="locked" type="password" inputmode="numeric" required pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="new-password" placeholder="请输入 6 位数字"/></label><label class="wallet-field"><span>确认提现密码</span><input v-model="confirmPin" :disabled="locked" type="password" inputmode="numeric" required pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="new-password" placeholder="请再次输入提现密码"/></label><p v-if="pinSetupError" class="wallet-error" role="alert">{{pinSetupError}}</p><button class="wallet-submit" :disabled="locked">{{pinSetupBusy?'保存中…':'保存提现密码'}}</button></form>
    <WalletWithdrawalForm v-if="kind==='withdraw'&&(!needsPin||pending)" :user="user" :settings="activeWithdrawal" :wager="account?.wagering" v-model:amount="draft.amount" v-model:network="payoutNetwork" v-model:address="payoutAddress" :password="withdrawalPassword" @update:password="setWithdrawalPassword" :locked="locked" :submitting="busy" :pending="!!pending" :address-busy="addressSaving" :needs-pin="needsPin" :error="error||withdrawalError" :notice="pendingNotice" :quantity="usdtPayoutPreview" :fee="feePreview" @accounts="accountsOpen=true" @submit="submit" @login="emit('login')" @change-password="pinSetupOpen=!pinSetupOpen;pinSetupError=''"/>
    <form v-if="kind==='deposit'" class="wallet-form" @submit.prevent="submit">
-    <label class="wallet-field"><span>USDT 数量</span><input v-model="usdtAmount" :disabled="locked" inputmode="numeric" required maxlength="15" autocomplete="off" placeholder="请输入 USDT 数量"/></label><label class="wallet-field"><span>交易 ID<small>（必填）</small></span><input v-model="transactionId" :disabled="locked" required minlength="64" maxlength="66" pattern="(0x)?[a-fA-F0-9]{64}" autocomplete="off" spellcheck="false" placeholder="请输入完整交易 ID（交易哈希）"/></label><label class="wallet-field wallet-note-field"><span>转账备注<small>（选填）</small></span><textarea v-model="usdtNote" :disabled="locked" maxlength="500" rows="2" placeholder="请输入转账备注"/></label>
+    <label class="wallet-field"><span>USDT 数量</span><input v-model="usdtAmount" :disabled="locked" inputmode="decimal" required maxlength="26" autocomplete="off" placeholder="请输入 USDT 数量（支持小数）"/></label><label class="wallet-field"><span>交易 ID<small>（必填）</small></span><input v-model="transactionId" :disabled="locked" required minlength="64" maxlength="66" pattern="(0x)?[a-fA-F0-9]{64}" autocomplete="off" spellcheck="false" placeholder="请输入完整交易 ID（交易哈希）"/></label><label class="wallet-field wallet-note-field"><span>转账备注<small>（选填）</small></span><textarea v-model="usdtNote" :disabled="locked" maxlength="500" rows="2" placeholder="请输入转账备注"/></label>
     <p v-if="pendingNotice" class="wallet-pending" role="status">{{pendingNotice}}</p><p v-if="error&&error!==pendingNotice" class="wallet-error" role="alert">{{error}}</p>
     <button class="wallet-submit" :disabled="busy||pinSetupBusy||addressSaving||!!user&&!pending&&!usdtAvailable" :type="user||pending?'submit':'button'" @click="!user&&!pending&&emit('login')">{{busy?'提交中…':pending?user?'重试确认':'登录并确认原申请':'存款'}}</button>
    </form>
-   <section v-if="kind==='deposit'" class="wallet-instructions"><h2>操作说明</h2><p>请使用页面显示的网络及收款地址完成转账，填写整数 USDT 数量和完整交易 ID（交易哈希，不能只填后5位）。提交后由管理员核对，审核通过后按本次申请保存的汇率计入余额。</p><p>申请进度和审核说明可在下方记录中查看。</p></section>
+   <section v-if="kind==='deposit'" class="wallet-instructions"><h2>操作说明</h2><p>请使用页面显示的网络及收款地址完成转账，填写 USDT 数量（支持小数，最多6位）和完整交易 ID（交易哈希，不能只填后5位）。提交后由管理员核对，审核通过后按本次申请保存的汇率计入余额。</p><p>申请进度和审核说明可在下方记录中查看。</p></section>
    <template v-if="user"><section class="wallet-record-section"><button class="wallet-record-toggle" :aria-expanded="requestsOpen" aria-controls="wallet-requests" @click="requestsOpen=!requestsOpen"><FileText :size="18"/><span>存款 / 提款记录<small>{{pendingCount?`${pendingCount} 笔待处理`:'最近 200 条'}}</small></span><ChevronDown :size="17" :class="{expanded:requestsOpen}"/></button><div v-if="requestsOpen" id="wallet-requests" class="wallet-requests"><article v-for="request in account?.requests" :key="request.id"><div><strong>{{walletLabel(request.kind)}}<b>{{money(request.amount_cents)}} 元</b></strong><small>{{datetime(request.created_at)}}</small><p v-if="request.payment_method==='usdt'&&!request.withdrawal" class="wallet-request-usdt">USDT {{request.usdt_amount}} · {{request.payment_network}} · 汇率 {{request.rate_yuan}}<span>交易 ID：{{request.transaction_id}}</span><span>收款地址：{{request.payment_address}}</span></p><p v-if="request.payment_method!=='usdt'&&request.transaction_id" class="wallet-request-usdt">交易 ID：{{request.transaction_id}}</p><PaymentRequestDetails v-if="request.withdrawal" :request="request"/><p>{{request.review_note||request.note}}</p><button v-if="request.kind==='withdraw'" type="button" class="withdrawal-detail-link" :disabled="locked" @click="showReceipt(request.id)">账变详情<ChevronDown :size="12"/></button></div><span class="badge" :class="request.status">{{labels[request.status]||request.status}}</span></article><p v-if="!account?.requests.length" class="wallet-empty">暂无申请记录</p></div></section></template>
    <p v-else class="wallet-login-note"><LockKeyhole :size="13"/>登录后可查看申请记录</p>
   </div>

@@ -36,7 +36,7 @@ function harness(file,reply,{props={},exports:names,actor={id:'admin',role:'admi
 function deletionHarness(reply=async()=>state(),options={}){
  return harness('AdminMemberDeletion.vue',reply,{...options,props:vue.reactive({member:{id:'member',username:'Member',role:'user'},action:'delete',...options.props}),exports:'preview,confirmation,note,error,loading,saving,requestKey,blockers,validForm,load,save,close,trap,dialog,authorized'})
 }
-function panelHarness(reply){return harness('AdminPanel.vue',reply,{exports:'tab,rows,overview,total,page,query,loading,error,isAdmin,pageSize,title,tabs,showDeleted,deletionAction,memberAction,inviterUser,wagerUser,action,busy,fundsRevision,load,changeTab,changeUserView,openDeletion,openAction,emit'})}
+function panelHarness(reply){return harness('AdminPanel.vue',reply,{exports:'tab,rows,overview,metricCards,total,page,query,loading,error,isAdmin,pageSize,title,tabs,showDeleted,deletionAction,memberAction,inviterUser,wagerUser,action,busy,fundsRevision,load,changeTab,changeUserView,openDeletion,openAction,emit'})}
 function walk(node,predicate){
  if(!node||typeof node!=='object')return []
  return [...(predicate(node)?[node]:[]),...(Array.isArray(node.children)?node.children.flatMap(child=>walk(child,predicate)):[])]
@@ -245,4 +245,22 @@ test('agent cards and exports label deleted nodes while keeping their invitation
  const node={id:'parent',username:'Parent',status:'deleted',deposit_cents:0,direct_count:1,team_count:1,team_deposit_cents:0}
  const {svg}=agentRelationSVG({items:[node,{...node,id:'child',username:'Child',status:'disabled',inviter_id:'parent',inviter_username:'Parent'}],day:'2026-10-26',today_stake_cents:0,exported_at:'now',scope:'全部团队'})
  assert.match(svg,/Parent（已删除）/);assert.doesNotMatch(svg,/Child（已删除）/);assert.match(svg,/<path d="M334 /)
+})
+
+test('overview displays visible account count and today new members as integers, refreshed from the API',async()=>{
+ let data={users:104,today_new_members:3,commission_cents:99999}
+ const h=panelHarness(async()=>data)
+ try{
+  await h.s.load()
+  assert.equal(h.s.metricCards.value.length,6)
+  assert.equal(h.s.metricCards.value[0].value,104)
+  const card=h.s.metricCards.value[5]
+  assert.equal(card.label,'今日新增会员数');assert.equal(card.value,3)
+  assert.match(card.hint,/北京时间/)
+  const rendered=text(h.render());assert.match(rendered,/今日新增会员数/);assert.doesNotMatch(rendered,/已生成佣金/)
+  data={users:103,today_new_members:2,commission_cents:99999};await h.s.load()
+  assert.equal(h.s.metricCards.value[0].value,103);assert.equal(h.s.metricCards.value[5].value,2)
+  data={users:100,today_new_members:0};await h.s.load()
+  assert.equal(h.s.metricCards.value[5].value,0)
+ }finally{h.close()}
 })

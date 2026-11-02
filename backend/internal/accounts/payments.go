@@ -43,11 +43,11 @@ type WalletSubmission struct {
 }
 
 var (
-	usdtIntegerPattern = regexp.MustCompile(`^[1-9][0-9]{0,18}$`)
-	usdtRatePattern    = regexp.MustCompile(`^(0|[1-9][0-9]{0,6})(\.[0-9]{1,6})?$`)
-	tronAddressPattern = regexp.MustCompile(`^T[1-9A-HJ-NP-Za-km-z]{33}$`)
-	ethAddressPattern  = regexp.MustCompile(`^0x[0-9a-fA-F]{40}$`)
-	transactionPattern = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
+	usdtQuantityPattern = regexp.MustCompile(`^(0|[1-9][0-9]{0,18})(\.[0-9]{1,6})?$`)
+	usdtRatePattern     = regexp.MustCompile(`^(0|[1-9][0-9]{0,6})(\.[0-9]{1,6})?$`)
+	tronAddressPattern  = regexp.MustCompile(`^T[1-9A-HJ-NP-Za-km-z]{33}$`)
+	ethAddressPattern   = regexp.MustCompile(`^0x[0-9a-fA-F]{40}$`)
+	transactionPattern  = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
 )
 
 func initializePayments(tx *bolt.Tx) error {
@@ -192,24 +192,29 @@ func (s *Store) SavePaymentSettings(actor string, cfg PaymentSettings) (PaymentS
 	return out, err
 }
 
-// Integer USDT times millionths of a yuan, rounded half up to the nearest cent.
+// Millionths of USDT times millionths of a yuan, rounded half up to the nearest cent.
 // big.Int prevents quantity/rate multiplication from overflowing before bounds
 // are checked. No floating-point or client-supplied yuan amount participates.
 func usdtAmountCents(quantity, rate string) (int64, error) {
-	if !usdtIntegerPattern.MatchString(quantity) {
-		return 0, errors.New("USDT 数量必须为正整数")
+	if !usdtQuantityPattern.MatchString(quantity) {
+		return 0, errors.New("USDT 数量必须大于 0，最多保留 6 位小数")
 	}
-	amount, ok := new(big.Int).SetString(quantity, 10)
-	if !ok || !amount.IsInt64() {
-		return 0, errors.New("USDT 数量超出范围")
+	parts := strings.SplitN(quantity, ".", 2)
+	fraction := ""
+	if len(parts) == 2 {
+		fraction = parts[1]
+	}
+	amount, ok := new(big.Int).SetString(parts[0]+fraction+strings.Repeat("0", 6-len(fraction)), 10)
+	if !ok || amount.Sign() <= 0 {
+		return 0, errors.New("USDT 数量必须大于 0，最多保留 6 位小数")
 	}
 	micros, err := usdtRateMicros(rate)
 	if err != nil {
 		return 0, err
 	}
 	amount.Mul(amount, big.NewInt(micros))
-	amount.Add(amount, big.NewInt(5000))
-	amount.Quo(amount, big.NewInt(10000))
+	amount.Add(amount, big.NewInt(5000000000))
+	amount.Quo(amount, big.NewInt(10000000000))
 	if !amount.IsInt64() || amount.Int64() < 100 || amount.Int64() > 100000000 {
 		return 0, errors.New("折合充值金额必须在 1–1,000,000 元之间")
 	}
